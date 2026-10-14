@@ -1,496 +1,252 @@
-<!DOCTYPE html>
-<html lang="vi">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#000">
-<title>SHK PRIVATE</title>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<style>
-:root{
-  --bg:#000;--card:#111;--hi:#1a1a1a;--bd:#2a2a2a;--tx:#fff;--mu:#9a9a9a;
-  --red:#ef4444;--gold:#fbbf24;
-  --pad:14px;--rad:14px;
-}
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{margin:0;background:var(--bg);color:var(--tx);
-  font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-  overscroll-behavior-y:contain}
-body{padding-bottom:env(safe-area-inset-bottom)}
-h1,h2{margin:0;font-weight:800}
-a,button{font:inherit;cursor:pointer}
-input,select,textarea{
-  background:var(--bg);color:var(--tx);border:1px solid var(--bd);
-  border-radius:12px;padding:12px 14px;width:100%;font:inherit;
-  min-height:46px; /* tap target */
-}
-input:focus,select:focus,button:focus-visible{outline:2px solid var(--red);outline-offset:1px}
-button{
-  background:var(--red);color:#fff;border:0;border-radius:12px;
-  padding:12px 16px;font-weight:700;min-height:46px;
-  display:inline-flex;align-items:center;justify-content:center;gap:6px;
-  transition:transform .05s ease,opacity .15s;
-}
-button:active{transform:scale(.97);opacity:.9}
-button.x{background:#7f1d1d;padding:4px 10px;margin-left:6px;font-size:12px;border-radius:8px;min-height:auto}
-button.g{background:var(--hi);border:1px solid var(--bd)}
+-- =====================================================================
+-- SHK PRIVATE - SQL MỚI
+-- Chạy toàn bộ file này 1 lần trong Supabase > SQL Editor.
+-- Cách hoạt động: mỗi lần nhập là 1 dòng trong rc_records.
+--   rc_best    = kỷ lục nhanh nhất của mỗi tay đua trên mỗi map
+--   rc_current = top 5 thời gian thấp nhất mỗi map (tự xếp hạng + tự tính điểm)
+-- Dữ liệu top 5 hiện tại của bản cũ được giữ lại và chuyển sang bản mới.
+-- Tài khoản (rc_profiles) được giữ nguyên.
+-- =====================================================================
 
-.w{max-width:1000px;margin:0 auto;padding:var(--pad)}
-.card{background:var(--card);border:1px solid var(--bd);border-radius:var(--rad);padding:16px;margin-bottom:14px}
+create extension if not exists unaccent with schema extensions;
 
-header{
-  position:sticky;top:0;z-index:20;background:#000e;backdrop-filter:blur(10px);
-  -webkit-backdrop-filter:blur(10px);
-  border-bottom:1px solid var(--bd);
-  padding-top:env(safe-area-inset-top);
-}
-header .w{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px var(--pad)}
-.brand{font-size:22px;color:var(--red);font-weight:900;letter-spacing:.5px;margin:0}
-.spacer{flex:1}
-.iconbtn{
-  background:var(--hi);border:1px solid var(--bd);color:#fff;
-  width:44px;height:44px;padding:0;border-radius:12px;font-size:18px;
-}
+-- ---------- 1. Sao lưu top 5 cũ (nếu có) ----------
+do $$
+begin
+  if to_regclass('public.rc_current') is not null
+     and to_regclass('public.rc_maps') is not null
+     and to_regclass('public.rc_racers') is not null
+     and to_regclass('public.bk_cur') is null then
+    execute 'create table public.bk_maps as select name, slug, difficulty, image_url from public.rc_maps';
+    execute 'create table public.bk_racers as select name, slug from public.rc_racers';
+    execute 'create table public.bk_cur as
+             select m.slug as map_slug, r.slug as racer_slug, c.time_ms, c.car, c.pet, c.posted_on
+             from public.rc_current c
+             join public.rc_maps m on m.id = c.map_id
+             join public.rc_racers r on r.id = c.racer_id';
+  end if;
+end $$;
 
-/* search */
-.sr{position:relative;flex:1;min-width:0;order:3;width:100%}
-@media(min-width:700px){.sr{order:0;width:auto}}
-.dd{
-  position:absolute;left:0;right:0;top:100%;margin-top:6px;
-  background:var(--card);border:1px solid var(--bd);border-radius:12px;
-  overflow:hidden;display:none;z-index:30;max-height:60vh;overflow-y:auto;
-  box-shadow:0 12px 32px #000a;
-}
-.dd div{padding:12px 14px;cursor:pointer;display:flex;justify-content:space-between;gap:8px;align-items:center}
-.dd div:active,.dd div:hover{background:var(--hi)}
-.dd small,.mu{color:var(--mu)}
-.gold{color:var(--gold);font-weight:800}
+-- ---------- 2. Xóa cấu trúc cũ ----------
+do $$
+declare f record; k "char";
+begin
+  for f in select oid::regprocedure as p from pg_proc
+           where pronamespace = 'public'::regnamespace
+             and proname in ('rc_save_snapshot','rc_delete_entry','rc_add_record')
+  loop
+    execute 'drop function ' || f.p || ' cascade';
+  end loop;
 
-/* maps grid */
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}
-@media(max-width:520px){.grid{grid-template-columns:1fr;gap:12px}}
-.mc{background:var(--card);border:1px solid var(--bd);border-radius:var(--rad);overflow:hidden;display:flex;flex-direction:column}
-.mc .im{aspect-ratio:16/9;background:#0a0a0a center/cover;cursor:pointer}
-.mc .b{padding:12px}
-.mc .b div.actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
-.mc button{flex:1;padding:10px;font-size:13px;min-height:42px}
+  for k in select relkind from pg_class
+           where relnamespace = 'public'::regnamespace and relname = 'rc_current'
+  loop
+    if k = 'v' then execute 'drop view public.rc_current cascade';
+    else execute 'drop table public.rc_current cascade'; end if;
+  end loop;
+end $$;
 
-/* tables -> responsive */
-.sc{overflow-x:auto;-webkit-overflow-scrolling:touch}
-table{width:100%;border-collapse:collapse}
-th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--bd);white-space:nowrap}
-th{color:var(--mu);font-weight:600;font-size:13px}
-td.t{font-variant-numeric:tabular-nums;color:var(--gold);font-weight:700}
+drop view  if exists public.rc_best cascade;
+drop table if exists public.rc_entries   cascade;
+drop table if exists public.rc_snapshots cascade;
+drop table if exists public.rc_records   cascade;
+drop table if exists public.rc_racers    cascade;
+drop table if exists public.rc_maps      cascade;
 
-/* ranking table -> hide T columns on mobile */
-@media(max-width:640px){
-  table.rank th:nth-child(n+6),table.rank td:nth-child(n+6){display:none}
-  table.rank th,table.rank td{padding:10px 6px;font-size:14px}
-  table.rank td:nth-child(1){width:34px}
-}
+-- ---------- 3. Bảng ----------
+create table if not exists public.rc_profiles(
+  id        uuid primary key references auth.users(id) on delete cascade,
+  username  text unique not null,
+  role      text not null default 'viewer' check (role in ('viewer','admin')),
+  created_at timestamptz not null default now()
+);
 
-/* history/entry tables -> card list on mobile */
-@media(max-width:640px){
-  table.list,table.list thead,table.list tbody,table.list tr,table.list th,table.list td{display:block;width:100%}
-  table.list thead{display:none}
-  table.list tr{
-    background:var(--hi);border:1px solid var(--bd);border-radius:12px;
-    padding:10px 12px;margin-bottom:10px;position:relative
-  }
-  table.list td{
-    border:0;padding:4px 0;white-space:normal;
-    display:flex;justify-content:space-between;gap:12px;align-items:center
-  }
-  table.list td::before{
-    content:attr(data-l);color:var(--mu);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em
-  }
-  table.list td.t{color:var(--gold)}
-  table.list td .x{margin-left:0}
-}
+create table public.rc_maps(
+  id         uuid primary key default gen_random_uuid(),
+  name       text not null,
+  slug       text not null unique,
+  difficulty int check (difficulty between 1 and 7),
+  image_url  text,
+  created_at timestamptz not null default now()
+);
 
-/* entry rows -> cards on mobile */
-.row{
-  display:grid;grid-template-columns:28px 2fr 1.2fr 1fr 1fr 1.2fr;
-  gap:8px;margin-bottom:8px;align-items:center
-}
-@media(max-width:700px){
-  .row{
-    grid-template-columns:36px 1fr 1fr;gap:8px;
-    background:var(--hi);border:1px solid var(--bd);border-radius:12px;
-    padding:12px;margin-bottom:10px;align-items:center
-  }
-  .row>b{grid-row:span 3;font-size:20px;text-align:center}
-  .row input{min-height:44px;padding:10px 12px}
-  .row input:nth-child(2){grid-column:2/4} /* name full */
-  .row input:nth-child(3){grid-column:2/3} /* time */
-  .row input:nth-child(4){grid-column:3/4} /* car */
-  .row input:nth-child(5){grid-column:2/3} /* pet */
-  .row input:nth-child(6){grid-column:3/4} /* date */
-}
-.two{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
-@media(max-width:420px){.two{grid-template-columns:1fr}}
-.hist{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
-.hist button{flex:0 0 auto}
-#toast{
-  position:fixed;bottom:calc(18px + env(safe-area-inset-bottom));left:50%;
-  transform:translateX(-50%);max-width:calc(100% - 32px);
-  background:var(--hi);border:1px solid var(--bd);padding:12px 18px;
-  border-radius:12px;display:none;z-index:50;box-shadow:0 10px 30px #000a;
-  text-align:center
-}
+create table public.rc_racers(
+  id   uuid primary key default gen_random_uuid(),
+  name text not null,
+  slug text not null unique,
+  created_at timestamptz not null default now()
+);
 
-/* mobile menu */
-.menu{position:relative}
-.menu-panel{
-  position:absolute;right:0;top:calc(100% + 8px);
-  background:var(--card);border:1px solid var(--bd);border-radius:12px;
-  padding:6px;min-width:200px;display:none;z-index:40;
-  box-shadow:0 12px 32px #000c;flex-direction:column;gap:4px
-}
-.menu-panel.open{display:flex}
-.menu-panel button{
-  width:100%;justify-content:flex-start;background:transparent;
-  border:0;border-radius:8px;padding:12px;min-height:44px
-}
-.menu-panel button:hover,.menu-panel button:active{background:var(--hi)}
-.menu-panel .sep{height:1px;background:var(--bd);margin:4px 2px}
+create table public.rc_records(
+  id         uuid primary key default gen_random_uuid(),
+  map_id     uuid not null references public.rc_maps(id)   on delete cascade,
+  racer_id   uuid not null references public.rc_racers(id) on delete cascade,
+  time_ms    int  not null check (time_ms > 0),
+  car        text not null default '',
+  pet        text not null default '',
+  posted_on  date,
+  created_at timestamptz not null default now()
+);
+create index rc_records_map_idx   on public.rc_records(map_id, time_ms);
+create index rc_records_racer_idx on public.rc_records(racer_id);
 
-/* racer detail hero */
-.hero{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
-@media(max-width:520px){
-  h1{font-size:22px !important}
-  .card{padding:14px}
-  .w{padding:12px}
-}
-</style>
-</head>
-<body>
-<div id="app"></div>
-<div id="toast"></div>
-<script>
-const URL_='https://unatinuxtabuvbhmszrv.supabase.co',KEY='sb_publishable_HBrKaDwH-tPqZfnN6pcpmw_kULc-rvP';
-const sb=supabase.createClient(URL_,KEY),app=document.getElementById('app');
-const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const nz=s=>String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d').toLowerCase();
-const fmt=ms=>[Math.floor(ms/6e4),Math.floor(ms%6e4/1e3),Math.floor(ms%1e3/10)].map(n=>String(n).padStart(2,'0')).join(':');
-const parse=t=>{const p=t.trim().split(':').map(Number);return p.length==3&&!p.some(isNaN)?p[0]*6e4+p[1]*1e3+p[2]*10:0};
-const fd=d=>d?new Date(d+'T00:00:00').toLocaleDateString('vi-VN'):'';
-const toast=m=>{const t=document.getElementById('toast');t.textContent=m;t.style.display='block';clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',m.length>40?9000:3000)};
-const TEST_MODE=false;
-let me,maps=[],racers=[],cur=[],delMode=false,em='',CV={},menuOpen=false;
-const st=n=>n?'★'.repeat(n):'';
-const rn=id=>racers.find(r=>r.id==id)?.name||'?',pts=a=>a.reduce((s,e)=>s+e.points,0);
+-- ---------- 4. View: kỷ lục tốt nhất + top 5 ----------
+create view public.rc_best with (security_invoker = on) as
+select distinct on (map_id, racer_id)
+       id, map_id, racer_id, time_ms, car, pet, posted_on, created_at
+from public.rc_records
+order by map_id, racer_id, time_ms, created_at;
 
-async function boot(){
-  if(TEST_MODE){me={username:'test',role:'admin'};await load();shell();return home()}
-  const{data:{session}}=await sb.auth.getSession();
-  session?start(session.user):authView()
-}
-function authView(reg){
-  app.innerHTML=`<div class="w" style="max-width:400px;padding-top:10vh">
-    <h1 style="font-size:30px;color:var(--red)">SHK Private</h1>
-    <p class="mu">${reg?'Tạo tài khoản bằng tên đăng nhập, không cần email.':'Đăng nhập để xem bảng điểm.'}</p>
-    <div class="card">
-      <input id="u" placeholder="Tên đăng nhập (a-z, 0-9, _)" autocomplete="username" inputmode="text" autocapitalize="none">
-      <div style="height:10px"></div>
-      <input id="p" type="password" placeholder="Mật khẩu (tối thiểu 6 ký tự)" autocomplete="${reg?'new':'current'}-password">
-      <div class="two">
-        <button onclick="auth(${!!reg})">${reg?'Tạo tài khoản':'Đăng nhập'}</button>
-        <button class="g" onclick="authView(${!reg})">${reg?'Đã có tài khoản':'Tạo tài khoản mới'}</button>
-      </div>
-    </div>
-  </div>`
-}
-async function auth(reg){
-  const u=document.getElementById('u').value.trim().toLowerCase(),password=document.getElementById('p').value;
-  if(!/^[a-z0-9_]{3,32}$/.test(u))return toast('Tên đăng nhập 3-32 ký tự a-z, 0-9, _');
-  const email=u+'@shk.local';let r;
-  if(reg){
-    r=await sb.auth.signUp({email,password});if(r.error)return toast(r.error.message);
-    if(!r.data.session)return toast('Hãy tắt "Confirm email" trong Supabase.');
-    const e=await sb.from('rc_profiles').insert({id:r.data.user.id,username:u});if(e.error)return toast(e.error.message)
-  }else{
-    r=await sb.auth.signInWithPassword({email,password});if(r.error)return toast('Sai tên đăng nhập hoặc mật khẩu.')
-  }
-  start(r.data.user)
-}
-async function load(){
-  const[a,b,c]=await Promise.all([
-    sb.from('rc_maps').select('*').order('difficulty',{ascending:false,nullsFirst:false}).order('name'),
-    sb.from('rc_racers').select('*').order('name'),
-    sb.from('rc_current').select('*')
-  ]);
-  const er=a.error||b.error||c.error;if(er)toast('Lỗi dữ liệu: '+er.message);
-  maps=a.data||[];racers=b.data||[];cur=c.data||[]
-}
-async function start(user){
-  const{data}=await sb.from('rc_profiles').select('*').eq('id',user.id).maybeSingle();
-  me=data||{username:'?',role:'viewer'};await load();shell();home()
-}
-const staff=()=>me.role=='admin';
+create view public.rc_current with (security_invoker = on) as
+select id, map_id, racer_id, time_ms, car, pet, posted_on, created_at,
+       rk::int as rank, (6 - rk)::int as points
+from (
+  select b.*, row_number() over (partition by b.map_id order by b.time_ms, b.created_at) as rk
+  from public.rc_best b
+) x
+where rk <= 5;
 
-function shell(){
-  const isStaff=staff();
-  app.innerHTML=`
-  <header>
-    <div class="w">
-      <h2 class="brand" onclick="home()">SHK</h2>
-      <div class="spacer"></div>
-      <button class="iconbtn menu-btn" onclick="toggleMenu(event)" aria-label="Menu">☰</button>
-      <div class="sr">
-        <input id="q" placeholder="Tìm tay đua hoặc map..." oninput="sugg()" onfocus="sugg()" autocomplete="off" autocapitalize="none">
-        <div class="dd" id="dd"></div>
-      </div>
-      <div class="menu">
-        <div class="menu-panel" id="menuPanel">
-          ${isStaff?'<button onclick="closeMenu();entry()">📝 Nhập điểm</button><button onclick="closeMenu();members()">👥 Thành viên</button><div class="sep"></div>':''}
-          ${TEST_MODE?'<button disabled>Chế độ test</button>':`<button disabled style="opacity:.6">👤 ${esc(me.username)}</button><button onclick="closeMenu();sb.auth.signOut().then(()=>location.reload())">🚪 Thoát</button>`}
-        </div>
-      </div>
-    </div>
-  </header>
-  <main class="w" id="v"></main>`;
-  document.addEventListener('click',e=>{
-    if(!e.target.closest('.sr'))document.querySelectorAll('.dd').forEach(d=>d.style.display='none');
-    if(!e.target.closest('.menu'))closeMenu();
-  });
-}
-function toggleMenu(e){e.stopPropagation();menuOpen=!menuOpen;document.getElementById('menuPanel').classList.toggle('open',menuOpen)}
-function closeMenu(){menuOpen=false;const p=document.getElementById('menuPanel');if(p)p.classList.remove('open')}
+-- ---------- 5. Phân quyền: is_admin() ----------
+create or replace function public.is_admin()
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.rc_profiles where id = auth.uid() and role = 'admin')
+$$;
+revoke all on function public.is_admin() from public, anon;
+grant execute on function public.is_admin() to authenticated;
 
-function sugg(){
-  const q=nz(document.getElementById('q').value.trim()),dd=document.getElementById('dd');
-  if(!q){dd.style.display='none';return}
-  const r=racers.filter(x=>nz(x.name+' '+x.slug).includes(q)).slice(0,6).map(x=>{
-    const e=cur.filter(c=>c.racer_id==x.id);
-    return`<div onclick="showRacer('${x.id}')"><span>🏎 ${esc(x.name)}</span><small>${e.length} rec · <b class="gold">${pts(e)}</b> điểm</small></div>`
-  });
-  const m=maps.filter(x=>nz(x.name).includes(q)).slice(0,6).map(x=>`<div onclick="showMap('${x.id}')"><span>🗺 ${esc(x.name)}</span><small>Top 5</small></div>`);
-  dd.innerHTML=r.concat(m).join('')||'<div class="mu">Không tìm thấy kết quả.</div>';
-  dd.style.display='block'
-}
-const V=h=>{document.getElementById('v').innerHTML=h;document.getElementById('dd').style.display='none';scrollTo(0,0)};
+-- ---------- 6. Tự tạo profile khi đăng ký ----------
+create or replace function public.rc_new_user()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.rc_profiles(id, username, role)
+  values (new.id, split_part(new.email, '@', 1), 'viewer')
+  on conflict (id) do nothing;
+  return new;
+end $$;
 
-function board(){
-  const m={};cur.forEach(e=>{const o=m[e.racer_id]||(m[e.racer_id]={id:e.racer_id,p:0,n:0,r:[0,0,0,0,0]});o.p+=e.points;o.n++;o.r[e.rank-1]++});
-  const L=Object.values(m).sort((a,b)=>b.p-a.p||b.r[0]-a.r[0]||b.n-a.n||rn(a.id).localeCompare(rn(b.id)));
-  if(!L.length)return'';
-  return`<div class="card">
-    <h2 style="font-size:18px">Xếp hạng tay đua</h2>
-    <p class="mu" style="margin:2px 0 10px">Tính từ top 5 hiện tại của mọi map: Top 1 = 5 điểm đến Top 5 = 1 điểm. Rec là số kỷ lục ghi nhận, T1-T5 là số lần đứng ở từng hạng.</p>
-    <div class="sc"><table class="rank">
-      <tr><th>#</th><th>Tay đua</th><th>Điểm</th><th>Rec</th><th>T1</th><th>T2</th><th>T3</th><th>T4</th><th>T5</th></tr>
-      ${L.map((o,i)=>`<tr style="cursor:pointer" onclick="showRacer('${o.id}')">
-        <td class="gold">${i+1}</td>
-        <td><b>${esc(rn(o.id))}</b></td>
-        <td class="gold">${o.p}</td>
-        <td>${o.n}</td>
-        ${o.r.map(n=>`<td class="${n?'':'mu'}">${n}</td>`).join('')}
-      </tr>`).join('')}
-    </table></div>
-  </div>`
-}
+drop trigger if exists rc_on_signup on auth.users;
+create trigger rc_on_signup after insert on auth.users
+for each row execute function public.rc_new_user();
 
-async function members(){
-  if(!staff())return;
-  const{data,error}=await sb.from('rc_profiles').select('*').order('username');if(error)return toast(error.message);
-  V(`<div class="card"><h2>Thành viên</h2>
-    <p class="mu">Viewer chỉ xem. Admin được nhập điểm, xóa dữ liệu và chỉnh quyền.</p>
-    <div class="sc"><table class="list">
-      <tr><th>Tên đăng nhập</th><th>Quyền</th></tr>
-      ${data.map(p=>`<tr>
-        <td data-l="Tài khoản"><b>${esc(p.username)}</b>${p.id==me.id?' <small class="mu">(bạn)</small>':''}</td>
-        <td data-l="Quyền"><select style="width:auto" ${p.id==me.id?'disabled':''} onchange="setRole('${p.id}',this.value)">
-          ${['viewer','admin'].map(r=>`<option ${p.role==r?'selected':''}>${r}</option>`).join('')}
-        </select></td>
-      </tr>`).join('')}
-    </table></div>
-  </div>`)
-}
-async function setRole(id,role){
-  const{data,error}=await sb.from('rc_profiles').update({role}).eq('id',id).select();
-  if(error)return toast(error.message);
-  if(!data.length)return toast('Không đổi được: chưa có quyền hoặc chưa chạy SQL cập nhật.');
-  toast('Đã cập nhật quyền.')
-}
+-- tạo profile cho tài khoản nào còn thiếu
+insert into public.rc_profiles(id, username, role)
+select u.id, split_part(u.email, '@', 1), 'viewer'
+from auth.users u
+where not exists (select 1 from public.rc_profiles p where p.id = u.id)
+on conflict do nothing;
 
-function home(){
-  V(`<div class="hero" style="margin:10px 0 16px">
-      <h1 style="font-size:26px"><span style="color:var(--red)">Bảng điểm</span> tay đua</h1>
-      ${staff()?`<button class="g" style="${delMode?'border-color:var(--red);color:var(--red)':''}" onclick="delMode=!delMode;home()">🗑 Xóa: ${delMode?'BẬT':'TẮT'}</button>`:''}
-    </div>
-    ${board()}
-    ${maps.length?'':'<p class="mu">Chưa có map. '+(staff()?'Vào "Nhập điểm" để thêm map đầu tiên.':'Hãy chờ admin thêm map.')+'</p>'}
-    <div class="grid">
-      ${maps.map(m=>`<div class="mc">
-        <div class="im" style="${m.image_url?`background-image:url('${esc(m.image_url)}')`:''}" onclick="showMap('${m.id}')"></div>
-        <div class="b">
-          <b>${esc(m.name)}</b> <span class="gold">${st(m.difficulty)}</span>
-          <div class="actions">
-            <button onclick="showMap('${m.id}')">Top 5</button>
-            <button class="g" onclick="showMap('${m.id}',0,1)">🕘 Bản lưu</button>
-            ${delMode?`<button style="background:#7f1d1d" onclick="delMap('${m.id}')">Xóa</button>`:''}
-          </div>
-        </div>
-      </div>`).join('')}
-    </div>`)
-}
-async function delMap(id){
-  const m=maps.find(x=>x.id==id);
-  if(!staff()||!confirm(`Xóa map "${m.name}" cùng toàn bộ bản lưu của map này? Không thể hoàn tác.`))return;
-  const{data,error}=await sb.from('rc_maps').delete().eq('id',id).select();
-  if(error)return toast(error.message);
-  if(!data.length)return toast('Không xóa được: bạn chưa có quyền hoặc chưa chạy SQL cập nhật.');
-  await load();toast(`Đã xóa map "${m.name}".`);home()
-}
+-- ---------- 7. Hàm nhập kỷ lục (chỉ admin) ----------
+create or replace function public.rc_add_record(
+  p_map uuid, p_name text, p_ms int, p_car text, p_pet text, p_date date
+) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare
+  v_name  text := regexp_replace(trim(coalesce(p_name,'')), '\s+', ' ', 'g');
+  v_slug  text;
+  v_racer uuid;
+  v_new   boolean := false;
+  v_best  int;
+  v_rank  int;
+begin
+  if not public.is_admin() then raise exception 'Bạn không có quyền admin.'; end if;
+  if v_name = '' then raise exception 'Cần nhập tên tay đua.'; end if;
+  if p_ms is null or p_ms <= 0 then raise exception 'Kỷ lục không hợp lệ.'; end if;
+  if not exists (select 1 from public.rc_maps where id = p_map) then raise exception 'Map không tồn tại.'; end if;
 
-function tbl(rows){
-  return rows.length?`<div class="sc"><table class="list">
-    <tr><th>#</th><th>Tên</th><th>Kỷ lục</th><th>Xe · Pet</th><th>Ngày đăng</th></tr>
-    ${rows.sort((a,b)=>a.rank-b.rank).map(e=>`<tr>
-      <td data-l="Hạng" class="gold">${e.rank}</td>
-      <td data-l="Tay đua"><b>${esc(rn(e.racer_id))}</b> <small class="mu">+${6-e.rank}</small></td>
-      <td data-l="Kỷ lục" class="t">${fmt(e.time_ms)}</td>
-      <td data-l="Xe · Pet">${esc(e.car||'—')} · ${esc(e.pet||'—')}</td>
-      <td data-l="Ngày">${fd(e.posted_on)}${staff()?` <button class="x" title="Xóa rec" onclick="delEntry('${e.id}')">✕</button>`:''}</td>
-    </tr>`).join('')}
-  </table></div>`:'<p class="mu">Chưa có bản lưu nào cho map này.</p>'
-}
+  v_slug := trim(both '-' from regexp_replace(lower(unaccent(v_name)), '[^a-z0-9]+', '-', 'g'));
+  if v_slug = '' then v_slug := 'x' || substr(md5(v_name), 1, 8); end if;
 
-async function showMap(id,sid,hist){
-  CV={map:id,sid:sid||0};const m=maps.find(x=>x.id==id);let rows,date;
-  if(sid){const{data}=await sb.from('rc_entries').select('*').eq('snapshot_id',sid);rows=data||[];date=sessionStorage.getItem('d'+sid)}
-  else{rows=cur.filter(c=>c.map_id==id);date=rows[0]?.saved_on}
-  const{data:sn}=hist||sid?await sb.from('rc_snapshots').select('id,saved_on,created_at').eq('map_id',id).order('created_at',{ascending:false}):{data:null};
-  (sn||[]).forEach(s=>sessionStorage.setItem('d'+s.id,s.saved_on));
-  V(`<div class="card">
-    <h1 style="font-size:22px">${esc(m.name)} <span class="gold">${st(m.difficulty)}</span></h1>
-    <p class="mu">${sid?'Bản lưu ngày <b>'+fd(date)+'</b>':'Top 5 hiện tại'+(date?' · lưu ngày <b>'+fd(date)+'</b>':'')}</p>
-    ${tbl(rows)}
-    <div class="hist">
-      <button class="g" onclick="showMap('${id}',0,1)">🕘 Bản lưu trước</button>
-      ${sid?`<button class="g" onclick="showMap('${id}')">Về top 5 hiện tại</button>`:''}
-      ${staff()&&rows.length?`<button style="background:#7f1d1d" onclick="delSnap('${sid||rows[0].snapshot_id}')">🗑 ${sid?'Xóa bản lưu này':'Xóa bản lưu mới nhất'}</button>`:''}
-    </div>
-    ${sn?`<div class="hist">${sn.length?sn.map(s=>`<button class="g" onclick="showMap('${id}','${s.id}')">${fd(s.saved_on)}</button>`).join(''):'<span class="mu">Chưa có bản lưu.</span>'}</div>`:''}
-  </div>`)
-}
-async function delEntry(id){
-  if(!confirm('Xóa kỷ lục này khỏi bản lưu? Các hạng bên dưới sẽ được dồn lên.'))return;
-  const{data,error}=await sb.rpc('rc_delete_entry',{p_id:id});
-  if(error)return toast(error.message);
-  await load();toast('Đã xóa kỷ lục.');
-  data?showMap(CV.map):showMap(CV.map,CV.sid,CV.sid?1:0)
-}
-async function delSnap(sid){
-  if(!confirm('Xóa bản lưu này? Nếu là bản mới nhất, bản lưu trước đó sẽ trở thành top 5 hiện tại.'))return;
-  const{data,error}=await sb.from('rc_snapshots').delete().eq('id',sid).select();
-  if(error)return toast(error.message);
-  if(!data.length)return toast('Không xóa được: chưa có quyền hoặc chưa chạy SQL cập nhật.');
-  await load();toast('Đã xóa bản lưu.');showMap(CV.map)
-}
+  select id into v_racer from public.rc_racers where slug = v_slug;
+  if v_racer is null then
+    insert into public.rc_racers(name, slug) values (v_name, v_slug) returning id into v_racer;
+    v_new := true;
+  end if;
 
-function showRacer(id){
-  const r=racers.find(x=>x.id==id),e=cur.filter(c=>c.racer_id==id).sort((a,b)=>a.rank-b.rank);
-  V(`<div class="card">
-    <h1 style="font-size:22px">${esc(r.name)} <span class="gold">${e.length} rec · ${pts(e)} điểm</span></h1>
-    <p class="mu">@${esc(r.slug)} · chỉ tính top 5 hiện tại của mỗi map.</p>
-    ${e.length?`<div class="sc"><table class="list">
-      <tr><th>Map</th><th>Hạng</th><th>Kỷ lục</th><th>Xe · Pet</th><th>Điểm</th></tr>
-      ${e.map(x=>`<tr>
-        <td data-l="Map"><a style="color:#fff" onclick="showMap('${x.map_id}')">${esc(maps.find(m=>m.id==x.map_id)?.name)}</a></td>
-        <td data-l="Hạng" class="gold">${x.rank}</td>
-        <td data-l="Kỷ lục" class="t">${fmt(x.time_ms)}</td>
-        <td data-l="Xe · Pet">${esc(x.car||'—')} · ${esc(x.pet||'—')}</td>
-        <td data-l="Điểm"><b>${x.points}</b></td>
-      </tr>`).join('')}
-    </table></div>`:'<p class="mu">Tay đua này chưa có kỷ lục trong top 5 nào.</p>'}
-  </div>`)
-}
+  select min(time_ms) into v_best from public.rc_records where map_id = p_map and racer_id = v_racer;
+  if v_best is not null and p_ms >= v_best then
+    return jsonb_build_object('status','slower','best',v_best,
+                              'racer',(select name from public.rc_racers where id = v_racer));
+  end if;
 
-function entry(){
-  if(!staff())return;em='';
-  V(`<div class="card">
-    <h2>Nhập top 5</h2>
-    <p class="mu">Chọn map để tự điền top 5 hiện tại, chỉnh sửa rồi bấm Lưu. Gõ tên tay đua (có gợi ý), tên chưa có sẽ tự động được thêm. Hạng 1-5 nhận 5-1 điểm. Hàng trống bị bỏ qua.</p>
-    <div class="sr" style="margin:10px 0 14px">
-      <input id="emq" placeholder="Tìm và chọn map..." oninput="mapSugg(1)" onfocus="mapSugg()" autocomplete="off" autocapitalize="none">
-      <div class="dd" id="edd"></div>
-    </div>
-    <datalist id="rl">${racers.map(r=>`<option value="${esc(r.name)}">`).join('')}</datalist>
-    ${[1,2,3,4,5].map(i=>`<div class="row">
-      <b class="gold">${i}</b>
-      <input list="rl" id="r${i}" placeholder="Tên tay đua" autocomplete="off" autocapitalize="words">
-      <input id="t${i}" placeholder="MM:SS:mm" inputmode="numeric">
-      <input id="c${i}" placeholder="Xe">
-      <input id="p${i}" placeholder="Pet">
-      <input id="d${i}" type="date">
-    </div>`).join('')}
-    <button onclick="save()" style="width:100%;margin-top:6px">💾 Lưu bản xếp hạng</button>
-  </div>
-  <div class="card">
-    <h2 style="font-size:17px">Thêm map</h2>
-    <div class="two">
-      <input id="mn" placeholder="Tên map">
-      <select id="md">${[1,2,3,4,5,6,7].map(n=>`<option value="${n}">${n} sao</option>`).join('')}</select>
-    </div>
-    <input id="mi" style="margin-top:10px" placeholder="Link ảnh (không bắt buộc)">
-    <button onclick="addMap()" style="width:100%;margin-top:12px">➕ Thêm map</button>
-  </div>`)
-}
-const slugify=s=>nz(s).replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'tay-dua';
+  insert into public.rc_records(map_id, racer_id, time_ms, car, pet, posted_on)
+  values (p_map, v_racer, p_ms, coalesce(trim(p_car),''), coalesce(trim(p_pet),''), p_date);
 
-function mapSugg(typed){
-  if(typed)em='';
-  const q=nz(document.getElementById('emq').value.trim()),dd=document.getElementById('edd');
-  const r=maps.filter(m=>!q||nz(m.name).includes(q)).slice(0,8);
-  dd.innerHTML=r.map(m=>`<div onclick="pickMap('${m.id}')"><span>🗺 ${esc(m.name)}</span><small class="gold">${st(m.difficulty)}</small></div>`).join('')||'<div class="mu">Không tìm thấy map.</div>';
-  dd.style.display='block'
-}
-function pickMap(id){
-  em=id;
-  document.getElementById('emq').value=maps.find(m=>m.id==id).name;
-  document.getElementById('edd').style.display='none';fill(id)
-}
-function fill(id){
-  const e=cur.filter(c=>c.map_id==id).sort((a,b)=>a.rank-b.rank),g=k=>document.getElementById(k);
-  for(let i=1;i<=5;i++){const x=e[i-1];
-    g('r'+i).value=x?rn(x.racer_id):'';
-    g('t'+i).value=x?fmt(x.time_ms):'';
-    g('c'+i).value=x?.car||'';
-    g('p'+i).value=x?.pet||'';
-    g('d'+i).value=x?.posted_on||''
-  }
-}
-async function save(){
-  if(!em){const f=maps.find(m=>nz(m.name)==nz(document.getElementById('emq').value));if(f)em=f.id}
-  const map=em;if(!map)return toast('Hãy chọn map từ gợi ý.');const inp=[];
-  for(let i=1;i<=5;i++){
-    const name=document.getElementById('r'+i).value.trim().replace(/\s+/g,' ');if(!name)continue;
-    const ms=parse(document.getElementById('t'+i).value);if(!ms)return toast(`Hàng ${i}: kỷ lục cần dạng MM:SS:mm.`);
-    inp.push({name,ms,car:document.getElementById('c'+i).value.trim(),pet:document.getElementById('p'+i).value.trim(),posted_on:document.getElementById('d'+i).value})
-  }
-  if(!inp.length)return toast('Cần nhập ít nhất 1 tay đua.');
-  const seen=new Set();for(const x of inp){const k=nz(x.name);if(seen.has(k))return toast(`${x.name} bị nhập trùng.`);seen.add(k)}
-  const find=n=>racers.find(r=>nz(r.name)==nz(n)),fresh=inp.filter(x=>!find(x.name));
-  if(fresh.length){
-    const used=new Set(racers.map(r=>r.slug)),add=fresh.map(x=>{const b=slugify(x.name);let s=b,n=2;while(used.has(s))s=b+'-'+n++;used.add(s);return{name:x.name,slug:s}});
-    const{error}=await sb.from('rc_racers').insert(add);if(error)return toast(error.message);
-    const{data}=await sb.from('rc_racers').select('*').order('name');racers=data||racers
-  }
-  const rows=inp.map((x,k)=>({racer_id:find(x.name).id,rank:k+1,time_ms:x.ms,car:x.car,pet:x.pet,posted_on:x.posted_on}));
-  const{error}=await sb.rpc('rc_save_snapshot',{p_map:map,p_rows:rows});if(error)return toast(error.message);
-  await load();toast(fresh.length?'Đã lưu. Tay đua mới: '+fresh.map(x=>x.name).join(', '):'Đã lưu bản xếp hạng.');
-  showMap(map)
-}
-async function addMap(){
-  const name=document.getElementById('mn').value.trim();if(!name)return toast('Cần nhập tên map.');
-  const slug=nz(name).replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
-  const{error}=await sb.from('rc_maps').insert({name,slug,difficulty:+document.getElementById('md').value,image_url:document.getElementById('mi').value.trim()||null});
-  if(error)return toast(error.code=='23505'?'Map này đã có.':error.message);
-  await load();toast('Đã thêm map.');entry()
-}
-boot();
-</script>
-</body>
-</html>
+  -- hạng = 1 + số tay đua khác có kỷ lục tốt nhất nhanh hơn hoặc bằng
+  select count(*) + 1 into v_rank
+  from (select racer_id, min(time_ms) as t
+        from public.rc_records
+        where map_id = p_map and racer_id <> v_racer
+        group by racer_id) x
+  where x.t <= p_ms;
+
+  return jsonb_build_object(
+    'status', case when v_rank <= 5 then 'top' else 'out' end,
+    'rank', v_rank,
+    'new_racer', v_new,
+    'racer', (select name from public.rc_racers where id = v_racer));
+end $$;
+
+revoke all on function public.rc_add_record(uuid,text,int,text,text,date) from public, anon;
+grant execute on function public.rc_add_record(uuid,text,int,text,text,date) to authenticated;
+
+-- ---------- 8. Khôi phục dữ liệu cũ ----------
+do $$
+begin
+  if to_regclass('public.bk_maps') is not null then
+    insert into public.rc_maps(name, slug, difficulty, image_url)
+      select name, slug, difficulty, image_url from public.bk_maps
+      on conflict (slug) do nothing;
+    insert into public.rc_racers(name, slug)
+      select name, slug from public.bk_racers
+      on conflict (slug) do nothing;
+    insert into public.rc_records(map_id, racer_id, time_ms, car, pet, posted_on)
+      select m.id, r.id, b.time_ms, coalesce(b.car,''), coalesce(b.pet,''), b.posted_on
+      from public.bk_cur b
+      join public.rc_maps   m on m.slug = b.map_slug
+      join public.rc_racers r on r.slug = b.racer_slug;
+  end if;
+end $$;
+
+-- ---------- 9. RLS ----------
+alter table public.rc_profiles enable row level security;
+alter table public.rc_maps     enable row level security;
+alter table public.rc_racers   enable row level security;
+alter table public.rc_records  enable row level security;
+
+do $$
+declare p record;
+begin
+  for p in select schemaname, tablename, policyname from pg_policies
+           where schemaname = 'public'
+             and tablename in ('rc_profiles','rc_maps','rc_racers','rc_records')
+  loop
+    execute format('drop policy %I on %I.%I', p.policyname, p.schemaname, p.tablename);
+  end loop;
+end $$;
+
+-- profiles: xem của mình (admin xem tất cả), chỉ admin đổi quyền
+create policy prof_select on public.rc_profiles for select to authenticated
+  using (id = auth.uid() or public.is_admin());
+create policy prof_update on public.rc_profiles for update to authenticated
+  using (public.is_admin()) with check (public.is_admin());
+
+-- maps / racers / records: ai đăng nhập cũng xem được, chỉ admin sửa
+create policy maps_select on public.rc_maps    for select to authenticated using (true);
+create policy maps_write  on public.rc_maps    for all    to authenticated using (public.is_admin()) with check (public.is_admin());
+
+create policy racers_select on public.rc_racers for select to authenticated using (true);
+create policy racers_write  on public.rc_racers for all    to authenticated using (public.is_admin()) with check (public.is_admin());
+
+create policy rec_select on public.rc_records for select to authenticated using (true);
+create policy rec_write  on public.rc_records for all    to authenticated using (public.is_admin()) with check (public.is_admin());
+
+grant select on public.rc_best, public.rc_current to authenticated;
+
+-- ---------- 10. Cấp admin cho chính bạn ----------
+-- Đăng ký tài khoản trên web trước, rồi bỏ dấu -- ở dòng dưới và đổi tên đăng nhập:
+-- update public.rc_profiles set role = 'admin' where username = 'ten_dang_nhap_cua_ban';
+
+-- Kiểm tra:
+-- select username, role from public.rc_profiles order by username;
+-- (Sau khi chắc chắn dữ liệu đã chuyển đủ, có thể xóa bảng sao lưu:
+--  drop table if exists public.bk_cur, public.bk_maps, public.bk_racers;)
