@@ -10,7 +10,7 @@ h1,h2{margin:0;font-weight:800}a,button{font:inherit;cursor:pointer}
 input,select{background:var(--bg);color:var(--tx);border:1px solid var(--bd);border-radius:10px;padding:9px 12px;width:100%;font:inherit}
 input:focus,select:focus,button:focus-visible{outline:2px solid var(--red)}
 button{background:var(--red);color:#fff;border:0;border-radius:10px;padding:9px 16px;font-weight:700}
-button.g{background:var(--hi);border:1px solid var(--bd)}
+button.x{background:#7f1d1d;padding:1px 8px;margin-left:8px;font-size:12px;border-radius:8px}button.g{background:var(--hi);border:1px solid var(--bd)}
 .w{max-width:1000px;margin:0 auto;padding:16px}
 .card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:16px;margin-bottom:14px}
 header{position:sticky;top:0;z-index:5;background:#000e;backdrop-filter:blur(8px);border-bottom:1px solid var(--bd)}
@@ -42,7 +42,7 @@ const parse=t=>{const p=t.trim().split(':').map(Number);return p.length==3&&!p.s
 const fd=d=>d?new Date(d+'T00:00:00').toLocaleDateString('vi-VN'):'';
 const toast=m=>{const t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',m.length>40?9000:3000)};
 const TEST_MODE=false; // true = bỏ đăng nhập để test. Đổi thành false để bật lại đăng nhập.
-let me,maps=[],racers=[],cur=[],delMode=false;
+let me,maps=[],racers=[],cur=[],delMode=false,em='',CV={};
 const st=n=>n?'★'.repeat(n):'';
 const rn=id=>racers.find(r=>r.id==id)?.name||'?',pts=a=>a.reduce((s,e)=>s+e.points,0);
 
@@ -68,7 +68,7 @@ const staff=()=>me.role=='admin'||me.role=='moderator';
 function shell(){app.innerHTML=`<header><div class="w"><h2 style="color:var(--red);cursor:pointer" onclick="home()">SHK</h2>
 <div class="sr"><input id="q" placeholder="Tìm tay đua hoặc map..." oninput="sugg()" onfocus="sugg()" autocomplete="off"><div class="dd" id="dd"></div></div>
 ${staff()?'<button class="g" onclick="entry()">Nhập điểm</button>':''}${TEST_MODE?'<span class="mu">Chế độ test</span>':`<span class="mu">${esc(me.username)}</span><button class="g" onclick="sb.auth.signOut().then(()=>location.reload())">Thoát</button>`}</div></header><main class="w" id="v"></main>`;
-document.addEventListener('click',e=>{if(!e.target.closest('.sr'))document.getElementById('dd').style.display='none'})}
+document.addEventListener('click',e=>{if(!e.target.closest('.sr'))document.querySelectorAll('.dd').forEach(d=>d.style.display='none')})}
 function sugg(){const q=nz(document.getElementById('q').value.trim()),dd=document.getElementById('dd');if(!q){dd.style.display='none';return}
 const r=racers.filter(x=>nz(x.name+' '+x.slug).includes(q)).slice(0,6).map(x=>{const e=cur.filter(c=>c.racer_id==x.id);return`<div onclick="showRacer('${x.id}')"><span>🏎 ${esc(x.name)}</span><small>${e.length} rec · <b class="gold">${pts(e)}</b> điểm</small></div>`});
 const m=maps.filter(x=>nz(x.name).includes(q)).slice(0,6).map(x=>`<div onclick="showMap('${x.id}')"><span>🗺 ${esc(x.name)}</span><small>Top 5</small></div>`);
@@ -82,26 +82,40 @@ async function delMap(id){const m=maps.find(x=>x.id==id);if(!staff()||!confirm(`
 const{data,error}=await sb.from('rc_maps').delete().eq('id',id).select();if(error)return toast(error.message);
 if(!data.length)return toast('Không xóa được: bạn chưa có quyền hoặc chưa chạy SQL cập nhật.');
 await load();toast(`Đã xóa map "${m.name}".`);home()}
-function tbl(rows,date){return rows.length?`<div class="sc"><table><tr><th>#</th><th>Tên</th><th>Kỷ lục</th><th>Xe · Pet</th><th>Ngày đăng</th></tr>${rows.sort((a,b)=>a.rank-b.rank).map(e=>`<tr><td class="gold">${e.rank}</td><td><b>${esc(rn(e.racer_id))}</b> <small class="mu">+${6-e.rank}</small></td><td class="t">${fmt(e.time_ms)}</td><td>${esc(e.car||'—')} · ${esc(e.pet||'—')}</td><td>${fd(e.posted_on)}</td></tr>`).join('')}</table></div>`:'<p class="mu">Chưa có bản lưu nào cho map này.</p>'}
-async function showMap(id,sid,hist){const m=maps.find(x=>x.id==id);let rows,date;
+function tbl(rows,date){return rows.length?`<div class="sc"><table><tr><th>#</th><th>Tên</th><th>Kỷ lục</th><th>Xe · Pet</th><th>Ngày đăng</th></tr>${rows.sort((a,b)=>a.rank-b.rank).map(e=>`<tr><td class="gold">${e.rank}</td><td><b>${esc(rn(e.racer_id))}</b> <small class="mu">+${6-e.rank}</small></td><td class="t">${fmt(e.time_ms)}</td><td>${esc(e.car||'—')} · ${esc(e.pet||'—')}</td><td>${fd(e.posted_on)}${staff()?` <button class="x" title="Xóa rec" onclick="delEntry('${e.id}')">✕</button>`:''}</td></tr>`).join('')}</table></div>`:'<p class="mu">Chưa có bản lưu nào cho map này.</p>'}
+async function showMap(id,sid,hist){CV={map:id,sid:sid||0};const m=maps.find(x=>x.id==id);let rows,date;
 if(sid){const{data}=await sb.from('rc_entries').select('*').eq('snapshot_id',sid);rows=data||[];date=sessionStorage.getItem('d'+sid)}
 else{rows=cur.filter(c=>c.map_id==id);date=rows[0]?.saved_on}
 const{data:sn}=hist||sid?await sb.from('rc_snapshots').select('id,saved_on,created_at').eq('map_id',id).order('created_at',{ascending:false}):{data:null};
 (sn||[]).forEach(s=>sessionStorage.setItem('d'+s.id,s.saved_on));
 V(`<div class="card"><h1 style="font-size:24px">${esc(m.name)} <span class="gold">${st(m.difficulty)}</span></h1><p class="mu">${sid?'Bản lưu ngày <b>'+fd(date)+'</b>':'Top 5 hiện tại'+(date?' · lưu ngày <b>'+fd(date)+'</b>':'')}</p>${tbl(rows)}
-<div class="hist"><button class="g" onclick="showMap('${id}',0,1)">🕘 Các bản lưu trước</button>${sid?`<button class="g" onclick="showMap('${id}')">Về top 5 hiện tại</button>`:''}</div>
+<div class="hist"><button class="g" onclick="showMap('${id}',0,1)">🕘 Các bản lưu trước</button>${sid?`<button class="g" onclick="showMap('${id}')">Về top 5 hiện tại</button>`:''}${staff()&&rows.length?`<button style="background:#7f1d1d" onclick="delSnap('${sid||rows[0].snapshot_id}')">🗑 ${sid?'Xóa bản lưu này':'Xóa bản lưu mới nhất'}</button>`:''}</div>
 ${sn?`<div class="hist">${sn.length?sn.map(s=>`<button class="g" onclick="showMap('${id}','${s.id}')">${fd(s.saved_on)}</button>`).join(''):'<span class="mu">Chưa có bản lưu.</span>'}</div>`:''}</div>`)}
+async function delEntry(id){if(!confirm('Xóa kỷ lục này khỏi bản lưu? Các hạng bên dưới sẽ được dồn lên.'))return;
+const{data,error}=await sb.rpc('rc_delete_entry',{p_id:id});if(error)return toast(error.message);
+await load();toast('Đã xóa kỷ lục.');data?showMap(CV.map):showMap(CV.map,CV.sid,CV.sid?1:0)}
+async function delSnap(sid){if(!confirm('Xóa bản lưu này? Nếu là bản mới nhất, bản lưu trước đó sẽ trở thành top 5 hiện tại.'))return;
+const{data,error}=await sb.from('rc_snapshots').delete().eq('id',sid).select();if(error)return toast(error.message);
+if(!data.length)return toast('Không xóa được: chưa có quyền hoặc chưa chạy SQL cập nhật.');
+await load();toast('Đã xóa bản lưu.');showMap(CV.map)}
 function showRacer(id){const r=racers.find(x=>x.id==id),e=cur.filter(c=>c.racer_id==id).sort((a,b)=>a.rank-b.rank);
 V(`<div class="card"><h1 style="font-size:24px">${esc(r.name)} <span class="gold">${e.length} rec · ${pts(e)} điểm</span></h1><p class="mu">@${esc(r.slug)} · chỉ tính top 5 hiện tại của mỗi map.</p>
 ${e.length?`<div class="sc"><table><tr><th>Map</th><th>Hạng</th><th>Kỷ lục</th><th>Xe · Pet</th><th>Điểm</th></tr>${e.map(x=>`<tr><td><a style="color:#fff" onclick="showMap('${x.map_id}')">${esc(maps.find(m=>m.id==x.map_id)?.name)}</a></td><td class="gold">${x.rank}</td><td class="t">${fmt(x.time_ms)}</td><td>${esc(x.car||'—')} · ${esc(x.pet||'—')}</td><td><b>${x.points}</b></td></tr>`).join('')}</table></div>`:'<p class="mu">Tay đua này chưa có kỷ lục trong top 5 nào.</p>'}</div>`)}
-function entry(){if(!staff())return;V(`<div class="card"><h2>Nhập top 5</h2><p class="mu">Gõ tên tay đua (có gợi ý). Tên chưa có sẽ tự động được thêm. Hạng 1-5 nhận 5-1 điểm. Hàng trống bị bỏ qua.</p>
-<select id="em" style="margin:8px 0 12px"><option value="">Chọn map</option>${maps.map(m=>`<option value="${m.id}">${esc(m.name)}</option>`).join('')}</select>
+function entry(){if(!staff())return;em='';V(`<div class="card"><h2>Nhập top 5</h2><p class="mu">Chọn map để tự điền top 5 hiện tại, chỉnh sửa rồi bấm Lưu để tạo bản lưu mới. Gõ tên tay đua (có gợi ý), tên chưa có sẽ tự động được thêm. Hạng 1-5 nhận 5-1 điểm. Hàng trống bị bỏ qua.</p>
+<div class="sr" style="margin:8px 0 12px"><input id="emq" placeholder="Tìm và chọn map..." oninput="mapSugg(1)" onfocus="mapSugg()" autocomplete="off"><div class="dd" id="edd"></div></div>
 <datalist id="rl">${racers.map(r=>`<option value="${esc(r.name)}">`).join('')}</datalist>
 ${[1,2,3,4,5].map(i=>`<div class="row"><b class="gold">${i}</b><input list="rl" id="r${i}" placeholder="Tên tay đua" autocomplete="off"><input id="t${i}" placeholder="MM:SS:mm"><input id="c${i}" placeholder="Xe"><input id="p${i}" placeholder="Pet"><input id="d${i}" type="date"></div>`).join('')}
 <button onclick="save()">Lưu bản xếp hạng</button></div>
 <div class="card"><h2 style="font-size:17px">Thêm map</h2><div class="two"><input id="mn" placeholder="Tên map"><select id="md">${[1,2,3,4,5,6,7].map(n=>`<option value="${n}">${n} sao</option>`).join('')}</select></div><input id="mi" style="margin-top:8px" placeholder="Link ảnh (không bắt buộc)"><br><button onclick="addMap()">Thêm map</button></div>`)}
 const slugify=s=>nz(s).replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'tay-dua';
-async function save(){const map=document.getElementById('em').value;if(!map)return toast('Hãy chọn map.');const inp=[];
+function mapSugg(typed){if(typed)em='';const q=nz(document.getElementById('emq').value.trim()),dd=document.getElementById('edd');
+const r=maps.filter(m=>!q||nz(m.name).includes(q)).slice(0,8);
+dd.innerHTML=r.map(m=>`<div onclick="pickMap('${m.id}')"><span>🗺 ${esc(m.name)}</span><small class="gold">${st(m.difficulty)}</small></div>`).join('')||'<div class="mu">Không tìm thấy map.</div>';dd.style.display='block'}
+function pickMap(id){em=id;document.getElementById('emq').value=maps.find(m=>m.id==id).name;document.getElementById('edd').style.display='none';fill(id)}
+function fill(id){const e=cur.filter(c=>c.map_id==id).sort((a,b)=>a.rank-b.rank),g=k=>document.getElementById(k);
+for(let i=1;i<=5;i++){const x=e[i-1];g('r'+i).value=x?rn(x.racer_id):'';g('t'+i).value=x?fmt(x.time_ms):'';g('c'+i).value=x?.car||'';g('p'+i).value=x?.pet||'';g('d'+i).value=x?.posted_on||''}}
+async function save(){if(!em){const f=maps.find(m=>nz(m.name)==nz(document.getElementById('emq').value));if(f)em=f.id}
+const map=em;if(!map)return toast('Hãy chọn map từ gợi ý.');const inp=[];
 for(let i=1;i<=5;i++){const name=document.getElementById('r'+i).value.trim().replace(/\s+/g,' ');if(!name)continue;
 const ms=parse(document.getElementById('t'+i).value);if(!ms)return toast(`Hàng ${i}: kỷ lục cần dạng MM:SS:mm.`);
 inp.push({name,ms,car:document.getElementById('c'+i).value.trim(),pet:document.getElementById('p'+i).value.trim(),posted_on:document.getElementById('d'+i).value})}
