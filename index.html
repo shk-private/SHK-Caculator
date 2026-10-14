@@ -100,6 +100,11 @@ tr.out td{opacity:.55}
   font-weight:600;padding:10px;min-height:42px;font-size:14px}
 .date-toggle button.on{background:var(--red);border-color:var(--red);color:#fff}
 .date-wrap{margin-top:8px}
+
+/* bảng điểm giải R1-R9 */
+.tt th,.tt td{text-align:center;white-space:nowrap;padding:8px 10px;vertical-align:top;border-bottom:1px solid var(--bd)}
+.tt td:first-child,.tt th:first-child{position:sticky;left:0;background:var(--card);text-align:left;z-index:1;border-right:1px solid var(--bd)}
+.tt small{font-size:12px}
 </style>
 </head>
 <body>
@@ -127,7 +132,6 @@ const toast=m=>{const t=document.getElementById('toast');t.textContent=m;t.style
 const st=n=>n?'★'.repeat(n):'';
 const today=()=>new Date(Date.now()-new Date().getTimezoneOffset()*6e4).toISOString().slice(0,10);
 
-/* ISO yyyy-mm-dd <-> dd/mm/yyyy */
 const vnDate=iso=>{if(!iso)return'';const[a,b,c]=String(iso).slice(0,10).split('-');return `${c}/${b}/${a}`};
 function parseVN(s){
   s=String(s).trim();
@@ -141,6 +145,7 @@ function parseVN(s){
 
 /* ---------- trạng thái ---------- */
 let me,maps=[],racers=[],cur=[],delMode=false,em='',CV={},menuOpen=false;
+let TID=null,TS=[],RES=[];   // state cho giải đấu
 const staff=()=>me&&me.role=='admin';
 const rn=id=>racers.find(r=>r.id==id)?.name||'?';
 const mname=id=>maps.find(m=>m.id==id)?.name||'?';
@@ -212,7 +217,10 @@ function shell(){
     <div class="menu">
       <button class="iconbtn" onclick="toggleMenu(event)" aria-label="Menu">☰</button>
       <div class="menu-panel" id="menuPanel">
-        ${staff()?'<button onclick="closeMenu();entry()">📝 Nhập kỷ lục</button><button onclick="closeMenu();members()">👥 Thành viên</button><div class="sep"></div>':''}
+        <button onclick="closeMenu();giai()">🏆 Giải đấu</button>
+        ${staff()?'<button onclick="closeMenu();addMapView()">🗺 Thêm map</button>':''}
+        ${staff()?'<button onclick="closeMenu();entry()">📝 Nhập kỷ lục</button><button onclick="closeMenu();members()">👥 Thành viên</button>':''}
+        <div class="sep"></div>
         <button disabled style="opacity:.6">👤 ${esc(me.username)} (${esc(me.role)})</button>
         <button onclick="closeMenu();sb.auth.signOut().then(()=>location.reload())">🚪 Thoát</button>
       </div>
@@ -455,20 +463,10 @@ function entry(mapId){
     </div>
     <button onclick="save()" style="width:100%;margin-top:12px">💾 Lưu kỷ lục</button>
   </div>
-  <div class="card" id="pv"><p class="mu">Chọn map để xem top 5 hiện tại.</p></div>
-  <div class="card">
-    <h2 style="font-size:17px">Thêm map</h2>
-    <div class="two">
-      <input id="mn" placeholder="Tên map">
-      <select id="md">${[1,2,3,4,5,6,7].map(n=>`<option value="${n}">${n} sao</option>`).join('')}</select>
-    </div>
-    <input id="mi" style="margin-top:10px" placeholder="Link ảnh (không bắt buộc)">
-    <button onclick="addMap()" style="width:100%;margin-top:12px">➕ Thêm map</button>
-  </div>`);
+  <div class="card" id="pv"><p class="mu">Chọn map để xem top 5 hiện tại.</p></div>`);
   if(mapId)pickMap(mapId)
 }
 
-/* toggle ngày */
 function setDateMode(mode){
   const t=document.getElementById('dtToday'),
         m=document.getElementById('dtManual'),
@@ -488,7 +486,6 @@ function setDateMode(mode){
     d.focus();
   }
 }
-/* validate khi gõ tay */
 document.addEventListener('input',e=>{
   if(e.target.id!=='d')return;
   const iso=parseVN(e.target.value);
@@ -529,7 +526,6 @@ async function save(){
   const name=g('r').replace(/\s+/g,' ');if(!name)return toast('Cần nhập tên tay đua.');
   const ms=parse(g('t'));if(!ms)return toast('Kỷ lục cần dạng MM:SS:mm (ví dụ 01:23:45).');
 
-  /* lấy ngày */
   let dateVal=document.getElementById('dValue').value;
   const manual=document.getElementById('dtManual').classList.contains('on');
   if(manual){
@@ -554,6 +550,21 @@ async function save(){
   }
   preview(em)
 }
+
+/* ---------- THÊM MAP: mục riêng ---------- */
+function addMapView(){
+  if(!staff())return;
+  V(`<div class="card"><h2>Thêm map</h2>
+    <p class="mu">Thêm map mới vào hệ thống. Map sẽ xuất hiện ở trang chủ và có thể dùng cho giải đấu R1-R9.</p>
+    <div class="two">
+      <input id="mn" placeholder="Tên map">
+      <select id="md">${[1,2,3,4,5,6,7].map(n=>`<option value="${n}">${n} sao</option>`).join('')}</select>
+    </div>
+    <input id="mi" style="margin-top:10px" placeholder="Link ảnh (không bắt buộc)">
+    <button onclick="addMap()" style="width:100%;margin-top:12px">➕ Thêm map</button>
+    <div class="hist"><button class="g" onclick="home()">← Về trang chủ</button></div>
+  </div>`)
+}
 async function addMap(){
   const name=document.getElementById('mn').value.trim();if(!name)return toast('Cần nhập tên map.');
   const{error}=await sb.from('rc_maps').insert({
@@ -562,8 +573,110 @@ async function addMap(){
     image_url:document.getElementById('mi').value.trim()||null
   });
   if(error)return toast(error.code=='23505'?'Map này đã có.':error.message);
-  await load();toast('Đã thêm map.');entry()
+  await load();toast('Đã thêm map.');addMapView()
 }
+
+/* ============================================================
+   GIẢI ĐẤU R1-R9
+   ============================================================ */
+async function loadT(){
+  const a=await sb.from('rc_tournaments').select('*').order('created_at',{ascending:false});
+  if(a.error)toast(a.error.message);TS=a.data||[];
+  if(!TS.find(t=>t.id==TID))TID=TS[0]?.id||null;
+  RES=[];
+  if(TID){const b=await sb.from('rc_tour_results').select('*').eq('tournament_id',TID);if(b.error)toast(b.error.message);RES=b.data||[]}
+}
+window.setTour=id=>{TID=id;giai()};
+window.giai=async function(){
+  await loadT();
+  const R=[1,2,3,4,5,6,7,8,9],mapOf=n=>RES.find(r=>r.round_no==n)?.map_id,by={};
+  RES.forEach(r=>{const o=by[r.racer_id]||(by[r.racer_id]={id:r.racer_id,t:0,c:{}});o.t+=r.points;o.c[r.round_no]=r});
+  const L=Object.values(by).sort((a,b)=>b.t-a.t||rn(a.id).localeCompare(rn(b.id)));
+  V(`<div class="card"><h2>Giải đấu</h2><div class="hist">
+    ${TS.map(t=>`<button class="${t.id==TID?'':'g'}" onclick="setTour('${t.id}')">${esc(t.name)}</button>`).join('')}
+    ${staff()?'<button class="g" onclick="newTour()">➕ Giải mới</button>':''}</div></div>
+  ${TID?`<div class="card"><p class="mu" style="margin:0 0 10px">Mỗi vòng xếp nhanh đến chậm: Top 1 = 5 điểm, Top 2 = 4, Top 3 = 3, Top 4 = 2. Tổng điểm là cộng R1-R9.</p>
+    <div class="sc"><table class="tt"><tr><th>Tay đua</th>${R.map(n=>`<th>R${n}<small class="mu" style="font-weight:400;display:block;max-width:110px;white-space:normal">${mapOf(n)?esc(mname(mapOf(n))):'—'}</small></th>`).join('')}<th>Tổng</th></tr>
+    ${L.map(o=>`<tr><td><b>${esc(rn(o.id))}</b></td>${R.map(n=>{const r=o.c[n];return r?`<td><b class="gold">${fmt(r.time_ms)}</b><br><small class="mu">${esc(r.car||'—')} · ${esc(r.pet||'—')}</small><br><small>Top ${r.rank} · <b>+${r.points}</b></small></td>`:'<td class="mu">—</td>'}).join('')}<td class="gold" style="font-size:18px">${o.t}</td></tr>`).join('')||'<tr><td class="mu" colspan="11">Chưa có vòng nào được nhập.</td></tr>'}
+    </table></div>
+    ${staff()?`<div class="hist">${R.map(n=>`<button class="g" onclick="entryRound(0,${n})">${mapOf(n)?'✎':'＋'} R${n}</button>`).join('')}<button class="d" onclick="delTour()">🗑 Xóa giải</button></div>`:''}</div>`
+  :'<div class="card mu">Chưa có giải đấu nào.</div>'}`)
+};
+window.newTour=async function(){
+  const n=prompt('Tên giải đấu:');if(!n||!n.trim())return;
+  const{data,error}=await sb.from('rc_tournaments').insert({name:n.trim()}).select().single();
+  if(error)return toast(error.message);TID=data.id;giai()
+};
+window.delTour=async function(){
+  const t=TS.find(x=>x.id==TID);if(!t||!confirm(`Xóa giải "${t.name}" cùng mọi kết quả R1-R9? Top 5 của map không bị ảnh hưởng.`))return;
+  const{data,error}=await sb.from('rc_tournaments').delete().eq('id',TID).select();
+  if(error)return toast(error.message);if(!data.length)return toast('Không xóa được: bạn chưa có quyền admin.');
+  TID=null;toast('Đã xóa giải.');giai()
+};
+
+/* nhập điểm 1 vòng (4 tay đua cùng lúc) */
+window.entryRound=async function(mapId,rd){
+  if(!staff())return;await loadT();
+  if(!TID){toast('Hãy tạo giải đấu trước (Giải đấu > Giải mới).');return giai()}
+  em='';
+  V(`<div class="card"><h2>Nhập điểm giải</h2>
+    <p class="mu">Giải: <b>${esc(TS.find(t=>t.id==TID).name)}</b>. Nhập tối đa 4 tay đua, web tự xếp từ nhanh đến chậm và tính điểm. Kỷ lục cũng được lưu vào top 5 của map và bảng xếp hạng clan.</p>
+    <select id="rd" onchange="fillRound()" style="margin:8px 0">${[1,2,3,4,5,6,7,8,9].map(n=>`<option value="${n}">R${n}${RES.some(r=>r.round_no==n)?' ✓ đã nhập':''}</option>`).join('')}</select>
+    <div class="sr" style="margin:6px 0 4px"><input id="emq" placeholder="Tìm và chọn map..." oninput="mapSugg(1)" onfocus="mapSugg()" autocomplete="off" autocapitalize="none"><div class="dd" id="edd"></div></div>
+    <datalist id="rl">${racers.map(r=>`<option value="${esc(r.name)}">`).join('')}</datalist>
+    ${[0,1,2,3].map(i=>`<div style="margin-top:14px"><b class="gold">Tay đua ${i+1}</b>
+      <input list="rl" id="n${i}" placeholder="Tên tay đua" autocomplete="off" style="margin-top:6px">
+      <div class="two"><input id="t${i}" placeholder="MM:SS:mm" inputmode="numeric"><input id="c${i}" placeholder="Xe"></div>
+      <input id="p${i}" placeholder="Pet" style="margin-top:10px"></div>`).join('')}
+    <small class="mu" style="display:block;margin-top:14px">Ngày đăng kỷ lục (dd/mm/yyyy)</small>
+    <input id="dt" value="${vnDate(today())}" inputmode="numeric" autocomplete="off">
+    <button onclick="saveRound()" style="width:100%;margin-top:14px">💾 Lưu vòng</button>
+    <div class="hist"><button class="g" onclick="giai()">← Về bảng điểm</button><button class="d" onclick="delRound()">🗑 Xóa vòng này</button></div></div>
+  <div class="card" id="pv"><p class="mu">Chọn map để xem top 5 hiện tại.</p></div>`);
+  if(rd)document.getElementById('rd').value=rd;
+  fillRound();
+  if(mapId&&!RES.some(r=>r.round_no==+g('rd')))pickMap(mapId)
+};
+window.fillRound=function(){
+  const n=+g('rd'),rows=RES.filter(r=>r.round_no==n).sort((a,b)=>a.rank-b.rank),s=(k,v)=>document.getElementById(k).value=v;
+  for(let i=0;i<4;i++){const x=rows[i];s('n'+i,x?rn(x.racer_id):'');s('t'+i,x?fmt(x.time_ms):'');s('c'+i,x?.car||'');s('p'+i,x?.pet||'')}
+  if(rows.length)pickMap(rows[0].map_id)
+};
+window.saveRound=async function(){
+  if(!em){const f=maps.find(m=>nz(m.name)==nz(g('emq')));if(f)em=f.id}
+  if(!em)return toast('Hãy chọn map từ gợi ý.');
+  const rd=+g('rd'),iso=parseVN(g('dt'));if(!iso)return toast('Ngày không hợp lệ, nhập dạng dd/mm/yyyy.');
+  const rows=[],seen=new Set();
+  for(let i=0;i<4;i++){
+    const n=g('n'+i).replace(/\s+/g,' '),t=g('t'+i);if(!n&&!t)continue;
+    if(!n)return toast(`Tay đua ${i+1}: thiếu tên.`);
+    const ms=parse(t);if(!ms)return toast(`Tay đua ${i+1}: kỷ lục cần dạng MM:SS:mm.`);
+    if(seen.has(nz(n)))return toast(`${n} bị nhập trùng.`);seen.add(nz(n));
+    rows.push({n,ms,c:g('c'+i),p:g('p'+i)})
+  }
+  if(!rows.length)return toast('Cần nhập ít nhất 1 tay đua.');
+  for(const x of rows){
+    const{error}=await sb.rpc('rc_add_record',{p_map:em,p_name:x.n,p_ms:x.ms,p_car:x.c,p_pet:x.p,p_date:iso});
+    if(error)return toast(`${x.n}: ${error.message}`)
+  }
+  await load();
+  const arr=rows.map(x=>({racer_id:racers.find(r=>nz(r.name)==nz(x.n))?.id,time_ms:x.ms,car:x.c,pet:x.p}));
+  if(arr.some(a=>!a.racer_id))return toast('Không tìm thấy tay đua vừa thêm, hãy bấm Lưu lại.');
+  const{error}=await sb.rpc('rc_save_round',{p_tour:TID,p_round:rd,p_map:em,p_rows:arr});
+  if(error)return toast(error.message);
+  toast(`Đã lưu R${rd}.`);giai()
+};
+window.delRound=async function(){
+  const n=+g('rd');if(!confirm(`Xóa kết quả R${n} khỏi giải? Kỷ lục trong top 5 của map vẫn giữ nguyên.`))return;
+  const{data,error}=await sb.from('rc_tour_results').delete().eq('tournament_id',TID).eq('round_no',n).select();
+  if(error)return toast(error.message);if(!data.length)return toast(`R${n} chưa có dữ liệu để xóa.`);
+  toast(`Đã xóa R${n}.`);giai()
+};
+
+/* helper dùng chung cho entryRound */
+const g=k=>document.getElementById(k).value.trim();
+
+/* ---------- khởi động ---------- */
 boot();
 </script>
 </body>
