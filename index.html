@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="vi"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SHK PRIVATE</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<style>
+:root{--bg:#000;--card:#111;--hi:#1a1a1a;--bd:#2a2a2a;--tx:#fff;--mu:#9a9a9a;--red:#ef4444;--gold:#fbbf24}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 system-ui,"Segoe UI",sans-serif}
+h1,h2{margin:0;font-weight:800}a,button{font:inherit;cursor:pointer}
+input,select{background:var(--bg);color:var(--tx);border:1px solid var(--bd);border-radius:10px;padding:9px 12px;width:100%;font:inherit}
+input:focus,select:focus,button:focus-visible{outline:2px solid var(--red)}
+button{background:var(--red);color:#fff;border:0;border-radius:10px;padding:9px 16px;font-weight:700}
+button.g{background:var(--hi);border:1px solid var(--bd)}
+.w{max-width:1000px;margin:0 auto;padding:16px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:16px;margin-bottom:14px}
+header{position:sticky;top:0;z-index:5;background:#000e;backdrop-filter:blur(8px);border-bottom:1px solid var(--bd)}
+header .w{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.sr{position:relative;flex:1;min-width:220px}
+.dd{position:absolute;left:0;right:0;top:100%;margin-top:4px;background:var(--card);border:1px solid var(--bd);border-radius:12px;overflow:hidden;display:none;z-index:9}
+.dd div{padding:9px 14px;cursor:pointer;display:flex;justify-content:space-between;gap:8px}.dd div:hover{background:var(--hi)}
+.dd small,.mu{color:var(--mu)}.gold{color:var(--gold);font-weight:800}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px}
+.mc{background:var(--card);border:1px solid var(--bd);border-radius:14px;overflow:hidden}
+.mc .im{aspect-ratio:16/9;background:#0a0a0a center/cover;cursor:pointer}.mc .b{padding:12px}
+.mc .b div{display:flex;gap:8px;margin-top:8px}.mc button{flex:1;padding:7px 8px;font-size:13px}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--bd)}
+th{color:var(--mu);font-weight:600;font-size:13px}td.t{font-variant-numeric:tabular-nums;color:var(--gold);font-weight:700}
+.sc{overflow-x:auto}.row{display:grid;grid-template-columns:28px 2fr 1.2fr 1fr 1fr 1.2fr;gap:8px;margin-bottom:8px;align-items:center}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.hist{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+#toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--hi);border:1px solid var(--bd);padding:10px 18px;border-radius:12px;display:none;z-index:20}
+@media(max-width:640px){.row{grid-template-columns:24px 1fr 1fr}.row input:nth-child(n+4){grid-column:span 1}}
+</style></head><body>
+<div id="app"></div><div id="toast"></div>
+<script>
+const URL_='https://xsyiqalmknldtflbeypc.supabase.co',KEY='sb_publishable_gMGGsOce1TskTHZhuot33Q_2LZOGjmN';
+const sb=supabase.createClient(URL_,KEY),app=document.getElementById('app');
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const nz=s=>String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d').toLowerCase();
+const fmt=ms=>[Math.floor(ms/6e4),Math.floor(ms%6e4/1e3),Math.floor(ms%1e3/10)].map(n=>String(n).padStart(2,'0')).join(':');
+const parse=t=>{const p=t.trim().split(':').map(Number);return p.length==3&&!p.some(isNaN)?p[0]*6e4+p[1]*1e3+p[2]*10:0};
+const fd=d=>d?new Date(d+'T00:00:00').toLocaleDateString('vi-VN'):'';
+const toast=m=>{const t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',3000)};
+const TEST_MODE=true; // true = bỏ đăng nhập để test. Đổi thành false để bật lại đăng nhập.
+let me,maps=[],racers=[],cur=[];
+const st=n=>n?'★'.repeat(n):'';
+const rn=id=>racers.find(r=>r.id==id)?.name||'?',pts=a=>a.reduce((s,e)=>s+e.points,0);
+
+async function boot(){if(TEST_MODE){me={username:'test',role:'admin'};await load();shell();return home()}
+const{data:{session}}=await sb.auth.getSession();session?start(session.user):authView()}
+function authView(reg){app.innerHTML=`<div class="w" style="max-width:380px;padding-top:12vh"><h1 style="font-size:30px;color:var(--red)">SHK Private</h1>
+<p class="mu">${reg?'Tạo tài khoản bằng tên đăng nhập, không cần email.':'Đăng nhập để xem bảng điểm.'}</p>
+<div class="card"><input id="u" placeholder="Tên đăng nhập (a-z, 0-9, _)" autocomplete="username"><div style="height:8px"></div>
+<input id="p" type="password" placeholder="Mật khẩu (tối thiểu 6 ký tự)" autocomplete="${reg?'new':'current'}-password"><div class="two"><button onclick="auth(${!!reg})">${reg?'Tạo tài khoản':'Đăng nhập'}</button>
+<button class="g" onclick="authView(${!reg})">${reg?'Đã có tài khoản':'Tạo tài khoản mới'}</button></div></div></div>`}
+async function auth(reg){const u=document.getElementById('u').value.trim().toLowerCase(),password=document.getElementById('p').value;
+if(!/^[a-z0-9_]{3,32}$/.test(u))return toast('Tên đăng nhập 3-32 ký tự a-z, 0-9, _');
+const email=u+'@shk.local';let r;
+if(reg){r=await sb.auth.signUp({email,password});if(r.error)return toast(r.error.message);
+if(!r.data.session)return toast('Hãy tắt "Confirm email" trong Supabase.');
+const e=await sb.from('rc_profiles').insert({id:r.data.user.id,username:u});if(e.error)return toast(e.error.message)}
+else{r=await sb.auth.signInWithPassword({email,password});if(r.error)return toast('Sai tên đăng nhập hoặc mật khẩu.')}
+start(r.data.user)}
+async function load(){const[a,b,c]=await Promise.all([sb.from('rc_maps').select('*').order('difficulty',{ascending:false,nullsFirst:false}).order('name'),sb.from('rc_racers').select('*').order('name'),sb.from('rc_current').select('*')]);
+maps=a.data||[];racers=b.data||[];cur=c.data||[]}
+async function start(user){const{data}=await sb.from('rc_profiles').select('*').eq('id',user.id).maybeSingle();me=data||{username:'?',role:'member'};await load();shell();home()}
+const staff=()=>me.role=='admin'||me.role=='moderator';
+function shell(){app.innerHTML=`<header><div class="w"><h2 style="color:var(--red);cursor:pointer" onclick="home()">SHK</h2>
+<div class="sr"><input id="q" placeholder="Tìm tay đua hoặc map..." oninput="sugg()" onfocus="sugg()" autocomplete="off"><div class="dd" id="dd"></div></div>
+${staff()?'<button class="g" onclick="entry()">Nhập điểm</button>':''}${TEST_MODE?'<span class="mu">Chế độ test</span>':`<span class="mu">${esc(me.username)}</span><button class="g" onclick="sb.auth.signOut().then(()=>location.reload())">Thoát</button>`}</div></header><main class="w" id="v"></main>`;
+document.addEventListener('click',e=>{if(!e.target.closest('.sr'))document.getElementById('dd').style.display='none'})}
+function sugg(){const q=nz(document.getElementById('q').value.trim()),dd=document.getElementById('dd');if(!q){dd.style.display='none';return}
+const r=racers.filter(x=>nz(x.name+' '+x.slug).includes(q)).slice(0,6).map(x=>{const e=cur.filter(c=>c.racer_id==x.id);return`<div onclick="showRacer('${x.id}')"><span>🏎 ${esc(x.name)}</span><small>${e.length} rec · <b class="gold">${pts(e)}</b> điểm</small></div>`});
+const m=maps.filter(x=>nz(x.name).includes(q)).slice(0,6).map(x=>`<div onclick="showMap('${x.id}')"><span>🗺 ${esc(x.name)}</span><small>Top 5</small></div>`);
+dd.innerHTML=r.concat(m).join('')||'<div class="mu">Không tìm thấy kết quả.</div>';dd.style.display='block'}
+const V=h=>{document.getElementById('v').innerHTML=h;document.getElementById('dd').style.display='none';scrollTo(0,0)};
+function home(){V(`<h1 style="margin:10px 0 16px;font-size:28px"><span style="color:var(--red)">Bảng điểm</span> tay đua</h1>
+${maps.length?'':'<p class="mu">Chưa có map. '+(staff()?'Vào "Nhập điểm" để thêm map đầu tiên.':'Hãy chờ admin thêm map.')+'</p>'}
+<div class="grid">${maps.map(m=>`<div class="mc"><div class="im" style="${m.image_url?`background-image:url('${esc(m.image_url)}')`:''}" onclick="showMap('${m.id}')"></div>
+<div class="b"><b>${esc(m.name)}</b> <span class="gold">${st(m.difficulty)}</span><div><button onclick="showMap('${m.id}')">Top 5</button><button class="g" onclick="showMap('${m.id}',0,1)">🕘 Bản lưu</button></div></div></div>`).join('')}</div>`)}
+function tbl(rows,date){return rows.length?`<div class="sc"><table><tr><th>#</th><th>Tên</th><th>Kỷ lục</th><th>Xe · Pet</th><th>Ngày đăng</th></tr>${rows.sort((a,b)=>a.rank-b.rank).map(e=>`<tr><td class="gold">${e.rank}</td><td><b>${esc(rn(e.racer_id))}</b> <small class="mu">+${6-e.rank}</small></td><td class="t">${fmt(e.time_ms)}</td><td>${esc(e.car||'—')} · ${esc(e.pet||'—')}</td><td>${fd(e.posted_on)}</td></tr>`).join('')}</table></div>`:'<p class="mu">Chưa có bản lưu nào cho map này.</p>'}
+async function showMap(id,sid,hist){const m=maps.find(x=>x.id==id);let rows,date;
+if(sid){const{data}=await sb.from('rc_entries').select('*').eq('snapshot_id',sid);rows=data||[];date=sessionStorage.getItem('d'+sid)}
+else{rows=cur.filter(c=>c.map_id==id);date=rows[0]?.saved_on}
+const{data:sn}=hist||sid?await sb.from('rc_snapshots').select('id,saved_on,created_at').eq('map_id',id).order('created_at',{ascending:false}):{data:null};
+(sn||[]).forEach(s=>sessionStorage.setItem('d'+s.id,s.saved_on));
+V(`<div class="card"><h1 style="font-size:24px">${esc(m.name)} <span class="gold">${st(m.difficulty)}</span></h1><p class="mu">${sid?'Bản lưu ngày <b>'+fd(date)+'</b>':'Top 5 hiện tại'+(date?' · lưu ngày <b>'+fd(date)+'</b>':'')}</p>${tbl(rows)}
+<div class="hist"><button class="g" onclick="showMap('${id}',0,1)">🕘 Các bản lưu trước</button>${sid?`<button class="g" onclick="showMap('${id}')">Về top 5 hiện tại</button>`:''}</div>
+${sn?`<div class="hist">${sn.length?sn.map(s=>`<button class="g" onclick="showMap('${id}','${s.id}')">${fd(s.saved_on)}</button>`).join(''):'<span class="mu">Chưa có bản lưu.</span>'}</div>`:''}</div>`)}
+function showRacer(id){const r=racers.find(x=>x.id==id),e=cur.filter(c=>c.racer_id==id).sort((a,b)=>a.rank-b.rank);
+V(`<div class="card"><h1 style="font-size:24px">${esc(r.name)} <span class="gold">${e.length} rec · ${pts(e)} điểm</span></h1><p class="mu">@${esc(r.slug)} · chỉ tính top 5 hiện tại của mỗi map.</p>
+${e.length?`<div class="sc"><table><tr><th>Map</th><th>Hạng</th><th>Kỷ lục</th><th>Xe · Pet</th><th>Điểm</th></tr>${e.map(x=>`<tr><td><a style="color:#fff" onclick="showMap('${x.map_id}')">${esc(maps.find(m=>m.id==x.map_id)?.name)}</a></td><td class="gold">${x.rank}</td><td class="t">${fmt(x.time_ms)}</td><td>${esc(x.car||'—')} · ${esc(x.pet||'—')}</td><td><b>${x.points}</b></td></tr>`).join('')}</table></div>`:'<p class="mu">Tay đua này chưa có kỷ lục trong top 5 nào.</p>'}</div>`)}
+function entry(){if(!staff())return;V(`<div class="card"><h2>Nhập top 5</h2><p class="mu">Gõ slug hoặc tên rồi chọn tay đua từ gợi ý. Hạng 1-5 nhận 5-1 điểm. Hàng trống bị bỏ qua.</p>
+<select id="em" style="margin:8px 0 12px"><option value="">Chọn map</option>${maps.map(m=>`<option value="${m.id}">${esc(m.name)}</option>`).join('')}</select>
+<datalist id="rl">${racers.map(r=>`<option value="${esc(r.slug)} — ${esc(r.name)}">`).join('')}</datalist>
+${[1,2,3,4,5].map(i=>`<div class="row"><b class="gold">${i}</b><input list="rl" id="r${i}" placeholder="Slug — tên tay đua"><input id="t${i}" placeholder="MM:SS:mm"><input id="c${i}" placeholder="Xe"><input id="p${i}" placeholder="Pet"><input id="d${i}" type="date"></div>`).join('')}
+<button onclick="save()">Lưu bản xếp hạng</button></div>
+<div class="two"><div class="card"><h2 style="font-size:17px">Thêm tay đua</h2><div class="two"><input id="rn" placeholder="Tên"><input id="rs" placeholder="slug (a-z, 0-9)"></div><br><button onclick="addRacer()">Thêm tay đua</button></div>
+<div class="card"><h2 style="font-size:17px">Thêm map</h2><div class="two"><input id="mn" placeholder="Tên map"><select id="md">${[1,2,3,4,5,6,7].map(n=>`<option value="${n}">${n} sao</option>`).join('')}</select></div><input id="mi" style="margin-top:8px" placeholder="Link ảnh (không bắt buộc)"><br><button onclick="addMap()">Thêm map</button></div></div>`)}
+async function save(){const map=document.getElementById('em').value;if(!map)return toast('Hãy chọn map.');const rows=[],seen=new Set();
+for(let i=1;i<=5;i++){const v=document.getElementById('r'+i).value.trim();if(!v)continue;const slug=v.split('—')[0].trim().toLowerCase(),r=racers.find(x=>x.slug==slug);
+if(!r)return toast(`Hàng ${i}: tay đua "${v}" chưa có. Hãy thêm bên dưới.`);if(seen.has(r.id))return toast(`Hàng ${i}: ${r.name} bị trùng.`);seen.add(r.id);
+const ms=parse(document.getElementById('t'+i).value);if(!ms)return toast(`Hàng ${i}: kỷ lục cần dạng MM:SS:mm.`);
+rows.push({racer_id:r.id,rank:rows.length+1,time_ms:ms,car:document.getElementById('c'+i).value.trim(),pet:document.getElementById('p'+i).value.trim(),posted_on:document.getElementById('d'+i).value})}
+if(!rows.length)return toast('Cần nhập ít nhất 1 tay đua.');
+const{error}=await sb.rpc('rc_save_snapshot',{p_map:map,p_rows:rows});if(error)return toast(error.message);
+await load();toast('Đã lưu bản xếp hạng.');showMap(map)}
+async function addRacer(){const name=document.getElementById('rn').value.trim(),slug=document.getElementById('rs').value.trim().toLowerCase();
+if(!name||!/^[a-z0-9_-]+$/.test(slug))return toast('Cần tên và slug (a-z, 0-9, _ -).');
+const{error}=await sb.from('rc_racers').insert({name,slug});if(error)return toast(error.code=='23505'?'Slug này đã được dùng.':error.message);await load();toast('Đã thêm tay đua.');entry()}
+async function addMap(){const name=document.getElementById('mn').value.trim();if(!name)return toast('Cần nhập tên map.');
+const slug=nz(name).replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+const{error}=await sb.from('rc_maps').insert({name,slug,difficulty:+document.getElementById('md').value,image_url:document.getElementById('mi').value.trim()||null});if(error)return toast(error.code=='23505'?'Map này đã có.':error.message);await load();toast('Đã thêm map.');entry()}
+boot();
+</script></body></html>
