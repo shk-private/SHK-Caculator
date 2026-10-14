@@ -93,6 +93,13 @@ tr.out td{opacity:.55}
 .menu-panel .sep{height:1px;background:var(--bd);margin:4px 2px}
 .hero{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
 @media(max-width:520px){h1{font-size:22px !important}.card{padding:14px}.w{padding:12px}}
+
+/* toggle ngày */
+.date-toggle{display:flex;gap:8px;margin-top:6px}
+.date-toggle button{flex:1;background:var(--hi);border:1px solid var(--bd);color:var(--tx);
+  font-weight:600;padding:10px;min-height:42px;font-size:14px}
+.date-toggle button.on{background:var(--red);border-color:var(--red);color:#fff}
+.date-wrap{margin-top:8px}
 </style>
 </head>
 <body>
@@ -119,6 +126,18 @@ const fdt=d=>d?new Date(d).toLocaleDateString('vi-VN'):'';
 const toast=m=>{const t=document.getElementById('toast');t.textContent=m;t.style.display='block';clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',m.length>40?7000:3000)};
 const st=n=>n?'★'.repeat(n):'';
 const today=()=>new Date(Date.now()-new Date().getTimezoneOffset()*6e4).toISOString().slice(0,10);
+
+/* ISO yyyy-mm-dd <-> dd/mm/yyyy */
+const vnDate=iso=>{if(!iso)return'';const[a,b,c]=String(iso).slice(0,10).split('-');return `${c}/${b}/${a}`};
+function parseVN(s){
+  s=String(s).trim();
+  if(!/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(s))return '';
+  let[d,m,y]=s.split('/').map(Number);
+  if(m<1||m>12||d<1||d>31||y<1900||y>2100)return '';
+  const dt=new Date(y,m-1,d);
+  if(dt.getFullYear()!=y||dt.getMonth()!=m-1||dt.getDate()!=d)return '';
+  return `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`
+}
 
 /* ---------- trạng thái ---------- */
 let me,maps=[],racers=[],cur=[],delMode=false,em='',CV={},menuOpen=false;
@@ -173,7 +192,6 @@ async function start(user){
   me=data||{id:user.id,username:'?',role:'viewer'};
   await load();shell();home()
 }
-/* tự cập nhật quyền khi quay lại tab, không cần F5 */
 async function refreshMe(){
   if(!me||!me.id)return;
   const{data}=await sb.from('rc_profiles').select('*').eq('id',me.id).maybeSingle();
@@ -321,19 +339,24 @@ async function delRec(id,fromHist){
   fromHist?showHistory(CV.map):showMap(CV.map)
 }
 
-/* ---------- sửa kỷ lục (ngày, thời gian, xe, pet) ---------- */
+/* ---------- sửa kỷ lục ---------- */
 async function editRec(id,fromHist){
   if(!staff())return;
   const{data:e,error}=await sb.from('rc_records').select('*').eq('id',id).maybeSingle();
   if(error)return toast(error.message);
   if(!e)return toast('Không tìm thấy kỷ lục.');
   CV.map=e.map_id;
+  const isoDate=e.posted_on||e.created_at.slice(0,10);
   V(`<div class="card">
     <h2>Sửa kỷ lục</h2>
     <p class="mu">${esc(rn(e.racer_id))} · ${esc(mname(e.map_id))}</p>
     <div class="two">
-      <div><small class="mu">Ngày</small><input id="ed" type="date" value="${e.posted_on||e.created_at.slice(0,10)}"></div>
-      <div><small class="mu">Thời gian</small><input id="et" value="${fmt(e.time_ms)}" inputmode="numeric" placeholder="MM:SS:mm"></div>
+      <div><small class="mu">Ngày (dd/mm/yyyy)</small>
+        <input id="ed" value="${vnDate(isoDate)}" placeholder="dd/mm/yyyy" inputmode="numeric" autocomplete="off">
+      </div>
+      <div><small class="mu">Thời gian</small>
+        <input id="et" value="${fmt(e.time_ms)}" inputmode="numeric" placeholder="MM:SS:mm">
+      </div>
       <div><small class="mu">Xe</small><input id="ec" value="${esc(e.car||'')}"></div>
       <div><small class="mu">Pet</small><input id="ep" value="${esc(e.pet||'')}"></div>
     </div>
@@ -346,8 +369,10 @@ async function editRec(id,fromHist){
 async function saveEdit(id,fromHist){
   const g=k=>document.getElementById(k).value.trim();
   const ms=parse(g('et'));if(!ms)return toast('Thời gian cần dạng MM:SS:mm.');
+  const iso=parseVN(g('ed'));
+  if(!iso)return toast('Ngày không hợp lệ. Nhập dạng dd/mm/yyyy, ví dụ 05/03/2025.');
   const{data,error}=await sb.from('rc_records').update({
-    posted_on:g('ed')||null,time_ms:ms,car:g('ec'),pet:g('ep')
+    posted_on:iso,time_ms:ms,car:g('ec'),pet:g('ep')
   }).eq('id',id).select();
   if(error)return toast(error.message);
   if(!data.length)return toast('Không sửa được: bạn chưa có quyền admin.');
@@ -398,7 +423,7 @@ async function setRole(id,role){
   toast('Đã cập nhật quyền.')
 }
 
-/* ---------- nhập kỷ lục (chỉ cần nhập 1 lần) ---------- */
+/* ---------- nhập kỷ lục ---------- */
 function entry(mapId){
   if(!staff())return;em='';
   V(`<div class="card">
@@ -412,9 +437,21 @@ function entry(mapId){
     <input list="rl" id="r" placeholder="Tên tay đua" autocomplete="off" autocapitalize="words">
     <div class="two">
       <input id="t" placeholder="MM:SS:mm" inputmode="numeric">
-      <input id="d" type="date" value="${today()}">
       <input id="c" placeholder="Xe">
+    </div>
+    <div class="two">
       <input id="p" placeholder="Pet">
+      <div>
+        <small class="mu">Ngày đăng</small>
+        <div class="date-toggle">
+          <button type="button" id="dtToday" class="on" onclick="setDateMode('today')">Hôm nay</button>
+          <button type="button" id="dtManual" onclick="setDateMode('manual')">Tự nhập</button>
+        </div>
+        <div class="date-wrap" id="dateWrap" style="display:none">
+          <input id="d" placeholder="dd/mm/yyyy" inputmode="numeric" autocomplete="off" value="">
+        </div>
+        <input type="hidden" id="dValue" value="${today()}">
+      </div>
     </div>
     <button onclick="save()" style="width:100%;margin-top:12px">💾 Lưu kỷ lục</button>
   </div>
@@ -430,6 +467,35 @@ function entry(mapId){
   </div>`);
   if(mapId)pickMap(mapId)
 }
+
+/* toggle ngày */
+function setDateMode(mode){
+  const t=document.getElementById('dtToday'),
+        m=document.getElementById('dtManual'),
+        wrap=document.getElementById('dateWrap'),
+        d=document.getElementById('d'),
+        hidden=document.getElementById('dValue');
+  if(mode=='today'){
+    t.classList.add('on');m.classList.remove('on');
+    wrap.style.display='none';
+    hidden.value=today();
+  }else{
+    m.classList.add('on');t.classList.remove('on');
+    wrap.style.display='block';
+    if(!d.value)d.value=vnDate(today());
+    const iso=parseVN(d.value);
+    if(iso)hidden.value=iso;
+    d.focus();
+  }
+}
+/* validate khi gõ tay */
+document.addEventListener('input',e=>{
+  if(e.target.id!=='d')return;
+  const iso=parseVN(e.target.value);
+  const hidden=document.getElementById('dValue');
+  if(hidden)hidden.value=iso||'';
+});
+
 function mapSugg(typed){
   if(typed)em='';
   const q=nz(document.getElementById('emq').value.trim()),dd=document.getElementById('edd');
@@ -462,8 +528,19 @@ async function save(){
   const g=k=>document.getElementById(k).value.trim();
   const name=g('r').replace(/\s+/g,' ');if(!name)return toast('Cần nhập tên tay đua.');
   const ms=parse(g('t'));if(!ms)return toast('Kỷ lục cần dạng MM:SS:mm (ví dụ 01:23:45).');
+
+  /* lấy ngày */
+  let dateVal=document.getElementById('dValue').value;
+  const manual=document.getElementById('dtManual').classList.contains('on');
+  if(manual){
+    const iso=parseVN(document.getElementById('d').value);
+    if(!iso)return toast('Ngày không hợp lệ. Nhập dạng dd/mm/yyyy, ví dụ 05/03/2025.');
+    dateVal=iso;
+  }
+  if(!dateVal)return toast('Cần chọn ngày đăng.');
+
   const{data,error}=await sb.rpc('rc_add_record',{
-    p_map:em,p_name:name,p_ms:ms,p_car:g('c'),p_pet:g('p'),p_date:g('d')||null
+    p_map:em,p_name:name,p_ms:ms,p_car:g('c'),p_pet:g('p'),p_date:dateVal
   });
   if(error)return toast(error.message);
   await load();
@@ -471,7 +548,10 @@ async function save(){
   else if(data.status=='out')toast(`Đã lưu ${fmt(ms)} nhưng chưa vào top 5 (hạng ${data.rank}).`);
   else toast(`Đã lưu: ${data.racer} hạng ${data.rank} (+${6-data.rank} điểm)${data.new_racer?' · tay đua mới':''}`);
   if(data.new_racer){document.getElementById('rl').innerHTML=racers.map(r=>`<option value="${esc(r.name)}">`).join('')}
-  if(data.status!='slower')['r','t','c','p'].forEach(k=>document.getElementById(k).value='');
+  if(data.status!='slower'){
+    ['r','t','c','p'].forEach(k=>document.getElementById(k).value='');
+    setDateMode('today');
+  }
   preview(em)
 }
 async function addMap(){
