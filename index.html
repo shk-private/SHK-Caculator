@@ -63,18 +63,27 @@ else{r=await sb.auth.signInWithPassword({email,password});if(r.error)return toas
 start(r.data.user)}
 async function load(){const[a,b,c]=await Promise.all([sb.from('rc_maps').select('*').order('difficulty',{ascending:false,nullsFirst:false}).order('name'),sb.from('rc_racers').select('*').order('name'),sb.from('rc_current').select('*')]);
 const er=a.error||b.error||c.error;if(er)toast('Lỗi dữ liệu: '+er.message);maps=a.data||[];racers=b.data||[];cur=c.data||[]}
-async function start(user){const{data}=await sb.from('rc_profiles').select('*').eq('id',user.id).maybeSingle();me=data||{username:'?',role:'member'};await load();shell();home()}
-const staff=()=>me.role=='admin'||me.role=='moderator';
+async function start(user){const{data}=await sb.from('rc_profiles').select('*').eq('id',user.id).maybeSingle();me=data||{username:'?',role:'viewer'};await load();shell();home()}
+const staff=()=>me.role=='admin';
 function shell(){app.innerHTML=`<header><div class="w"><h2 style="color:var(--red);cursor:pointer" onclick="home()">SHK</h2>
 <div class="sr"><input id="q" placeholder="Tìm tay đua hoặc map..." oninput="sugg()" onfocus="sugg()" autocomplete="off"><div class="dd" id="dd"></div></div>
-${staff()?'<button class="g" onclick="entry()">Nhập điểm</button>':''}${TEST_MODE?'<span class="mu">Chế độ test</span>':`<span class="mu">${esc(me.username)}</span><button class="g" onclick="sb.auth.signOut().then(()=>location.reload())">Thoát</button>`}</div></header><main class="w" id="v"></main>`;
+${staff()?'<button class="g" onclick="entry()">Nhập điểm</button><button class="g" onclick="members()">Thành viên</button>':''}${TEST_MODE?'<span class="mu">Chế độ test</span>':`<span class="mu">${esc(me.username)}</span><button class="g" onclick="sb.auth.signOut().then(()=>location.reload())">Thoát</button>`}</div></header><main class="w" id="v"></main>`;
 document.addEventListener('click',e=>{if(!e.target.closest('.sr'))document.querySelectorAll('.dd').forEach(d=>d.style.display='none')})}
 function sugg(){const q=nz(document.getElementById('q').value.trim()),dd=document.getElementById('dd');if(!q){dd.style.display='none';return}
 const r=racers.filter(x=>nz(x.name+' '+x.slug).includes(q)).slice(0,6).map(x=>{const e=cur.filter(c=>c.racer_id==x.id);return`<div onclick="showRacer('${x.id}')"><span>🏎 ${esc(x.name)}</span><small>${e.length} rec · <b class="gold">${pts(e)}</b> điểm</small></div>`});
 const m=maps.filter(x=>nz(x.name).includes(q)).slice(0,6).map(x=>`<div onclick="showMap('${x.id}')"><span>🗺 ${esc(x.name)}</span><small>Top 5</small></div>`);
 dd.innerHTML=r.concat(m).join('')||'<div class="mu">Không tìm thấy kết quả.</div>';dd.style.display='block'}
 const V=h=>{document.getElementById('v').innerHTML=h;document.getElementById('dd').style.display='none';scrollTo(0,0)};
+function board(){const m={};cur.forEach(e=>{const o=m[e.racer_id]||(m[e.racer_id]={id:e.racer_id,p:0,n:0,r:[0,0,0,0,0]});o.p+=e.points;o.n++;o.r[e.rank-1]++});
+const L=Object.values(m).sort((a,b)=>b.p-a.p||b.r[0]-a.r[0]||b.n-a.n||rn(a.id).localeCompare(rn(b.id)));if(!L.length)return'';
+return`<div class="card"><h2 style="font-size:18px">Xếp hạng tay đua</h2><p class="mu" style="margin:2px 0 8px">Tính từ top 5 hiện tại của mọi map: Top 1 = 5 điểm đến Top 5 = 1 điểm. Rec là số kỷ lục ghi nhận, T1-T5 là số lần đứng ở từng hạng.</p>
+<div class="sc" style="max-height:440px;overflow-y:auto"><table><tr><th>#</th><th>Tay đua</th><th>Điểm</th><th>Rec</th><th>T1</th><th>T2</th><th>T3</th><th>T4</th><th>T5</th></tr>${L.map((o,i)=>`<tr style="cursor:pointer" onclick="showRacer('${o.id}')"><td class="gold">${i+1}</td><td><b>${esc(rn(o.id))}</b></td><td class="gold">${o.p}</td><td>${o.n}</td>${o.r.map(n=>`<td class="${n?'':'mu'}">${n}</td>`).join('')}</tr>`).join('')}</table></div></div>`}
+async function members(){if(!staff())return;const{data,error}=await sb.from('rc_profiles').select('*').order('username');if(error)return toast(error.message);
+V(`<div class="card"><h2>Thành viên</h2><p class="mu">Viewer chỉ xem. Admin được nhập điểm, xóa dữ liệu và chỉnh quyền.</p><div class="sc"><table><tr><th>Tên đăng nhập</th><th>Quyền</th></tr>${data.map(p=>`<tr><td><b>${esc(p.username)}</b>${p.id==me.id?' <small class="mu">(bạn)</small>':''}</td><td><select style="width:auto" ${p.id==me.id?'disabled':''} onchange="setRole('${p.id}',this.value)">${['viewer','admin'].map(r=>`<option ${p.role==r?'selected':''}>${r}</option>`).join('')}</select></td></tr>`).join('')}</table></div></div>`)}
+async function setRole(id,role){const{data,error}=await sb.from('rc_profiles').update({role}).eq('id',id).select();if(error)return toast(error.message);
+if(!data.length)return toast('Không đổi được: chưa có quyền hoặc chưa chạy SQL cập nhật.');toast('Đã cập nhật quyền.')}
 function home(){V(`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0 16px"><h1 style="font-size:28px"><span style="color:var(--red)">Bảng điểm</span> tay đua</h1>${staff()?`<button class="g" style="${delMode?'border-color:var(--red);color:var(--red)':''}" onclick="delMode=!delMode;home()">🗑 Chế độ xóa: ${delMode?'Bật':'Tắt'}</button>`:''}</div>
+${board()}
 ${maps.length?'':'<p class="mu">Chưa có map. '+(staff()?'Vào "Nhập điểm" để thêm map đầu tiên.':'Hãy chờ admin thêm map.')+'</p>'}
 <div class="grid">${maps.map(m=>`<div class="mc"><div class="im" style="${m.image_url?`background-image:url('${esc(m.image_url)}')`:''}" onclick="showMap('${m.id}')"></div>
 <div class="b"><b>${esc(m.name)}</b> <span class="gold">${st(m.difficulty)}</span><div><button onclick="showMap('${m.id}')">Top 5</button><button class="g" onclick="showMap('${m.id}',0,1)">🕘 Bản lưu</button>${delMode?`<button style="background:#7f1d1d" onclick="delMap('${m.id}')">Xóa</button>`:''}</div></div></div>`).join('')}</div>`)}
