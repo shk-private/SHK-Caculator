@@ -219,7 +219,7 @@ function shell(){
       <div class="menu-panel" id="menuPanel">
         <button onclick="closeMenu();giai()">🏆 Giải đấu</button>
         ${staff()?'<button onclick="closeMenu();addMapView()">🗺 Thêm map</button>':''}
-        ${staff()?'<button onclick="closeMenu();entry()">📝 Nhập kỷ lục</button><button onclick="closeMenu();members()">👥 Thành viên</button>':''}
+        ${staff()?'<button onclick="closeMenu();entry()">📝 Nhập kỷ lục</button><button onclick="closeMenu();backups()">🗄 Bản lưu trước</button><button onclick="closeMenu();members()">👥 Thành viên</button>':''}
         <div class="sep"></div>
         <button disabled style="opacity:.6">👤 ${esc(me.username)} (${esc(me.role)})</button>
         <button onclick="closeMenu();sb.auth.signOut().then(()=>location.reload())">🚪 Thoát</button>
@@ -269,7 +269,11 @@ function board(){
 function home(){
   V(`<div class="hero" style="margin:10px 0 16px">
       <h1 style="font-size:26px"><span style="color:var(--red)">Bảng điểm</span> tay đua</h1>
-      ${staff()?`<button class="g" style="${delMode?'border-color:var(--red);color:var(--red)':''}" onclick="delMode=!delMode;home()">🗑 Xóa map: ${delMode?'BẬT':'TẮT'}</button>`:''}
+      ${staff()?`<div class="hist" style="margin:0">
+        <button class="g" style="${delMode?'border-color:var(--red);color:var(--red)':''}" onclick="delMode=!delMode;home()">🗑 Xóa map: ${delMode?'BẬT':'TẮT'}</button>
+        <button class="d" onclick="delAllRecs()">🗑 Xóa toàn bộ kỷ lục</button>
+        <button class="g" onclick="backups()">🗄 Bản lưu trước</button>
+      </div>`:''}
     </div>
     ${board()}
     ${maps.length?'':'<p class="mu">Chưa có map. '+(staff()?'Vào "Nhập kỷ lục" để thêm map đầu tiên.':'Hãy chờ admin thêm map.')+'</p>'}
@@ -293,6 +297,78 @@ async function delMap(id){
   if(error)return toast(error.message);
   if(!data.length)return toast('Không xóa được: bạn chưa có quyền admin.');
   await load();toast(`Đã xóa map "${m.name}".`);home()
+}
+
+/* ---------- XÓA TOÀN BỘ KỶ LỤC + BẢN LƯU TRƯỚC ---------- */
+async function fetchAllRecords(){
+  const out=[];
+  for(let from=0;;from+=1000){
+    const{data,error}=await sb.from('rc_records').select('*').order('created_at').order('id').range(from,from+999);
+    if(error)throw error;
+    out.push(...data);
+    if(data.length<1000)break;
+  }
+  return out
+}
+async function delAllRecs(){
+  if(!staff())return;
+  let rows;try{rows=await fetchAllRecords()}catch(e){return toast(e.message)}
+  if(!rows.length)return toast('Chưa có kỷ lục nào để xóa.');
+  if(!confirm(`Xóa TOÀN BỘ ${rows.length} kỷ lục của mọi map?\n\nBảng xếp hạng và top 5 sẽ trống. Kỷ lục được chuyển vào "Bản lưu trước" và có thể khôi phục.`))return;
+  const b=await sb.from('rc_backups').insert({note:`Xóa toàn bộ kỷ lục · ${me.username}`,record_count:rows.length,data:rows}).select('id').single();
+  if(b.error)return toast(/rc_backups/.test(b.error.message)?'Chưa tạo bảng rc_backups trong Supabase, hãy chạy file SQL trước.':'Không tạo được bản lưu nên chưa xóa: '+b.error.message);
+  const d=await sb.from('rc_records').delete().not('id','is',null);
+  if(d.error){await sb.from('rc_backups').delete().eq('id',b.data.id);return toast(d.error.message)}
+  const left=await sb.from('rc_records').select('id',{count:'exact',head:true});
+  await load();
+  if(left.count>=rows.length){
+    await sb.from('rc_backups').delete().eq('id',b.data.id);
+    toast('Không xóa được: bạn chưa có quyền admin.')
+  }else if(left.count>0)toast(`Chỉ xóa được một phần (còn ${left.count} kỷ lục).`);
+  else toast(`Đã xóa ${rows.length} kỷ lục và lưu vào Bản lưu trước.`);
+  home()
+}
+async function backups(){
+  if(!staff())return;
+  const{data,error}=await sb.from('rc_backups').select('id,created_at,note,record_count').order('created_at',{ascending:false});
+  if(error)return toast(/rc_backups/.test(error.message)?'Chưa tạo bảng rc_backups trong Supabase, hãy chạy file SQL trước.':error.message);
+  V(`<div class="card"><h2>Bản lưu trước</h2>
+    <p class="mu">Kỷ lục bị xóa toàn bộ được lưu ở đây. Bạn có thể khôi phục hoặc xóa vĩnh viễn từng bản lưu.</p>
+    ${data.length?`<div class="sc"><table class="list">
+      <tr class="h"><th>Thời gian</th><th>Nội dung</th><th>Số kỷ lục</th><th></th></tr>
+      ${data.map(b=>`<tr>
+        <td data-l="Thời gian">${new Date(b.created_at).toLocaleString('vi-VN')}</td>
+        <td data-l="Nội dung">${esc(b.note||'—')}</td>
+        <td data-l="Số kỷ lục" class="t">${b.record_count}</td>
+        <td data-l=""><span style="display:flex;gap:8px">
+          <button class="g" style="min-height:38px;padding:8px 12px;font-size:13px" onclick="restoreBackup('${b.id}')">♻ Khôi phục</button>
+          <button class="d" style="min-height:38px;padding:8px 12px;font-size:13px" onclick="delBackup('${b.id}')">Xóa</button></span></td>
+      </tr>`).join('')}
+    </table></div>`:'<p class="mu">Chưa có bản lưu nào.</p>'}
+    <div class="hist"><button class="g" onclick="home()">← Về trang chủ</button></div>
+  </div>`)
+}
+async function restoreBackup(id){
+  if(!staff())return;
+  const{data,error}=await sb.from('rc_backups').select('*').eq('id',id).maybeSingle();
+  if(error)return toast(error.message);
+  if(!data)return toast('Không tìm thấy bản lưu.');
+  const mi=new Set(maps.map(m=>m.id)),ri=new Set(racers.map(r=>r.id));
+  const ok=data.data.filter(r=>mi.has(r.map_id)&&ri.has(r.racer_id)),skip=data.data.length-ok.length;
+  if(!ok.length)return toast('Không khôi phục được: map hoặc tay đua của bản lưu này đã bị xóa.');
+  if(!confirm(`Khôi phục ${ok.length} kỷ lục${skip?` (bỏ qua ${skip} kỷ lục vì map đã bị xóa)`:''}?\nKỷ lục hiện có được giữ nguyên, kỷ lục trùng sẽ lấy theo bản lưu.`))return;
+  for(let i=0;i<ok.length;i+=500){
+    const{error}=await sb.from('rc_records').upsert(ok.slice(i,i+500),{onConflict:'id'});
+    if(error)return toast('Lỗi khi khôi phục: '+error.message)
+  }
+  await load();toast(`Đã khôi phục ${ok.length} kỷ lục.`);backups()
+}
+async function delBackup(id){
+  if(!staff()||!confirm('Xóa vĩnh viễn bản lưu này? Không thể hoàn tác.'))return;
+  const{data,error}=await sb.from('rc_backups').delete().eq('id',id).select('id');
+  if(error)return toast(error.message);
+  if(!data.length)return toast('Không xóa được: bạn chưa có quyền admin.');
+  toast('Đã xóa bản lưu.');backups()
 }
 
 /* ---------- trang map ---------- */
@@ -614,35 +690,57 @@ window.delTour=async function(){
   TID=null;toast('Đã xóa giải.');giai()
 };
 
-/* nhập điểm 1 vòng (4 tay đua cùng lúc) */
+/* nhập điểm 1 vòng (4 tay đua cùng lúc, tự xếp top 1-4) */
 window.entryRound=async function(mapId,rd){
   if(!staff())return;await loadT();
   if(!TID){toast('Hãy tạo giải đấu trước (Giải đấu > Giải mới).');return giai()}
   em='';
   V(`<div class="card"><h2>Nhập điểm giải</h2>
-    <p class="mu">Giải: <b>${esc(TS.find(t=>t.id==TID).name)}</b>. Nhập tối đa 4 tay đua, web tự xếp từ nhanh đến chậm và tính điểm. Kỷ lục cũng được lưu vào top 5 của map và bảng xếp hạng clan.</p>
+    <p class="mu">Giải: <b>${esc(TS.find(t=>t.id==TID).name)}</b>. Nhập tối đa 4 tay đua theo thứ tự bất kỳ, web tự xếp từ nhanh đến chậm (Top 1 ở trên cùng) và tính điểm. Kỷ lục cũng được lưu vào top 5 của map và bảng xếp hạng clan.</p>
     <select id="rd" onchange="fillRound()" style="margin:8px 0">${[1,2,3,4,5,6,7,8,9].map(n=>`<option value="${n}">R${n}${RES.some(r=>r.round_no==n)?' ✓ đã nhập':''}</option>`).join('')}</select>
     <div class="sr" style="margin:6px 0 4px"><input id="emq" placeholder="Tìm và chọn map..." oninput="mapSugg(1)" onfocus="mapSugg()" autocomplete="off" autocapitalize="none"><div class="dd" id="edd"></div></div>
     <datalist id="rl">${racers.map(r=>`<option value="${esc(r.name)}">`).join('')}</datalist>
-    ${[0,1,2,3].map(i=>`<div style="margin-top:14px"><b class="gold">Tay đua ${i+1}</b>
+    ${[0,1,2,3].map(i=>`<div class="rb" style="margin-top:14px"><b class="gold" id="lb${i}">Tay đua ${i+1}</b>
       <input list="rl" id="n${i}" placeholder="Tên tay đua" autocomplete="off" style="margin-top:6px">
       <div class="two"><input id="t${i}" placeholder="MM:SS:mm" inputmode="numeric"><input id="c${i}" placeholder="Xe"></div>
       <input id="p${i}" placeholder="Pet" style="margin-top:10px"></div>`).join('')}
     <small class="mu" style="display:block;margin-top:14px">Ngày đăng kỷ lục (dd/mm/yyyy)</small>
     <input id="dt" value="${vnDate(today())}" inputmode="numeric" autocomplete="off">
-    <button onclick="saveRound()" style="width:100%;margin-top:14px">💾 Lưu vòng</button>
+    <button class="g" onclick="sortRound()" style="width:100%;margin-top:14px">⇅ Xếp hạng ngay</button>
+    <button onclick="saveRound()" style="width:100%;margin-top:10px">💾 Lưu vòng</button>
     <div class="hist"><button class="g" onclick="giai()">← Về bảng điểm</button><button class="d" onclick="delRound()">🗑 Xóa vòng này</button></div></div>
   <div class="card" id="pv"><p class="mu">Chọn map để xem top 5 hiện tại.</p></div>`);
   if(rd)document.getElementById('rd').value=rd;
   fillRound();
   if(mapId&&!RES.some(r=>r.round_no==+g('rd')))pickMap(mapId)
 };
+/* xếp 4 tay đua từ nhanh đến chậm, gắn nhãn Top + điểm (Top 1 = 5, Top 2 = 4, Top 3 = 3, Top 4 = 2) */
+window.sortRound=function(){
+  if(!document.getElementById('n0'))return;
+  const rows=[0,1,2,3].map(i=>({i,n:g('n'+i),t:g('t'+i),c:g('c'+i),p:g('p'+i),ms:parse(g('t'+i))}))
+    .filter(x=>x.n||x.t)
+    .sort((a,b)=>(a.ms||Infinity)-(b.ms||Infinity)||a.i-b.i);
+  const s=(k,v)=>document.getElementById(k).value=v;
+  for(let i=0;i<4;i++){
+    const x=rows[i],lb=document.getElementById('lb'+i);
+    s('n'+i,x?x.n:'');s('t'+i,x?(x.ms?fmt(x.ms):x.t):'');s('c'+i,x?x.c:'');s('p'+i,x?x.p:'');
+    lb.textContent=x&&x.ms?`Top ${i+1} · +${5-i} điểm`:`Tay đua ${i+1}`
+  }
+};
+/* tự xếp khi rời khỏi một khối tay đua (tránh đổi chỗ giữa lúc đang gõ xe/pet) */
+document.addEventListener('focusout',e=>{
+  const b=e.target.closest&&e.target.closest('.rb');if(!b)return;
+  if(e.relatedTarget&&b.contains(e.relatedTarget))return;
+  sortRound()
+});
 window.fillRound=function(){
   const n=+g('rd'),rows=RES.filter(r=>r.round_no==n).sort((a,b)=>a.rank-b.rank),s=(k,v)=>document.getElementById(k).value=v;
   for(let i=0;i<4;i++){const x=rows[i];s('n'+i,x?rn(x.racer_id):'');s('t'+i,x?fmt(x.time_ms):'');s('c'+i,x?.car||'');s('p'+i,x?.pet||'')}
+  sortRound();
   if(rows.length)pickMap(rows[0].map_id)
 };
 window.saveRound=async function(){
+  sortRound();
   if(!em){const f=maps.find(m=>nz(m.name)==nz(g('emq')));if(f)em=f.id}
   if(!em)return toast('Hãy chọn map từ gợi ý.');
   const rd=+g('rd'),iso=parseVN(g('dt'));if(!iso)return toast('Ngày không hợp lệ, nhập dạng dd/mm/yyyy.');
