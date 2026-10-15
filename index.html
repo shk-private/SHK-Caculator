@@ -105,6 +105,11 @@ tr.out td{opacity:.55}
 .tt th,.tt td{text-align:center;white-space:nowrap;padding:8px 10px;vertical-align:top;border-bottom:1px solid var(--bd)}
 .tt td:first-child,.tt th:first-child{position:sticky;left:0;background:var(--card);text-align:left;z-index:1;border-right:1px solid var(--bd)}
 .tt small{font-size:12px}
+
+/* trạng thái online */
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#555;margin-right:8px;vertical-align:middle}
+.dot.on{background:#22c55e;box-shadow:0 0 8px #22c55e}
+.ost.on{color:#22c55e;font-weight:700}
 </style>
 </head>
 <body>
@@ -195,7 +200,7 @@ async function load(){
 async function start(user){
   const{data}=await sb.from('rc_profiles').select('*').eq('id',user.id).maybeSingle();
   me=data||{id:user.id,username:'?',role:'viewer'};
-  await load();shell();home()
+  await load();shell();home();startPresence()
 }
 async function refreshMe(){
   if(!me||!me.id)return;
@@ -500,21 +505,40 @@ function showRacer(id){
 }
 
 /* ---------- thành viên ---------- */
+/* ---------- online (Supabase Realtime Presence) ---------- */
+let PRES={},pch=null;
+const isOn=id=>!!PRES[id];
+function startPresence(){
+  if(pch||!me||!me.id)return;
+  pch=sb.channel('shk-online',{config:{presence:{key:String(me.id)}}});
+  pch.on('presence',{event:'sync'},()=>{PRES=pch.presenceState();paintOnline()})
+     .subscribe(async st=>{if(st==='SUBSCRIBED')await pch.track({u:me.username,at:Date.now()})})
+}
+function paintOnline(){
+  document.querySelectorAll('[data-pid]').forEach(el=>el.className='dot'+(isOn(el.dataset.pid)?' on':''));
+  document.querySelectorAll('[data-st]').forEach(el=>{const o=isOn(el.dataset.st);el.className='ost'+(o?' on':'');el.textContent=o?'Đang online':'Offline'});
+  const c=document.getElementById('olCount');if(c)c.textContent=document.querySelectorAll('.dot.on').length
+}
+
+/* ---------- thành viên ---------- */
 async function members(){
   if(!staff())return;
   const{data,error}=await sb.from('rc_profiles').select('*').order('username');if(error)return toast(error.message);
-  V(`<div class="card"><h2>Thành viên</h2>
-    <p class="mu">Viewer chỉ xem. Admin được nhập kỷ lục, xóa dữ liệu và chỉnh quyền.</p>
+  data.sort((a,b)=>isOn(b.id)-isOn(a.id)||a.username.localeCompare(b.username));
+  V(`<div class="card"><h2>Thành viên <span class="gold" style="font-size:15px">· <span id="olCount">0</span> đang online</span></h2>
+    <p class="mu">Viewer chỉ xem. Admin được nhập kỷ lục, xóa dữ liệu và chỉnh quyền. Chấm xanh là đang mở web.</p>
     <div class="sc"><table class="list">
-      <tr class="h"><th>Tên đăng nhập</th><th>Quyền</th></tr>
+      <tr class="h"><th>Tên đăng nhập</th><th>Trạng thái</th><th>Quyền</th></tr>
       ${data.map(p=>`<tr>
-        <td data-l="Tài khoản"><b>${esc(p.username)}</b>${p.id==me.id?' <small class="mu">(bạn)</small>':''}</td>
+        <td data-l="Tài khoản"><span class="dot${isOn(p.id)?' on':''}" data-pid="${p.id}"></span><b>${esc(p.username)}</b>${p.id==me.id?' <small class="mu">(bạn)</small>':''}</td>
+        <td data-l="Trạng thái"><span class="ost${isOn(p.id)?' on':''}" data-st="${p.id}">${isOn(p.id)?'Đang online':'Offline'}</span></td>
         <td data-l="Quyền"><select style="width:auto" ${p.id==me.id?'disabled':''} onchange="setRole('${p.id}',this.value)">
           ${['viewer','admin'].map(r=>`<option ${p.role==r?'selected':''}>${r}</option>`).join('')}
         </select></td>
       </tr>`).join('')}
     </table></div>
-  </div>`)
+  </div>`);
+  paintOnline()
 }
 async function setRole(id,role){
   const{data,error}=await sb.from('rc_profiles').update({role}).eq('id',id).select();
